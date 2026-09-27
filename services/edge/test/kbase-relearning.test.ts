@@ -38,15 +38,19 @@ function fakeEnv(extra: Partial<Env> = {}): Env {
 function fakeDOState(): DurableObjectState {
   const store = new Map<string, unknown>();
   let alarm: number | null = null;
+  const storage = {
+    get: async (k: string) => store.get(k),
+    put: async (k: string, v: unknown) => void store.set(k, v),
+    setAlarm: async (t: number | Date) => void (alarm = typeof t === "number" ? t : t.getTime()),
+    deleteAlarm: async () => void (alarm = null),
+    getAlarm: async () => alarm,
+  };
   return {
     acceptWebSocket: () => {},
     getWebSockets: () => [],
     storage: {
-      get: async (k: string) => store.get(k),
-      put: async (k: string, v: unknown) => void store.set(k, v),
-      setAlarm: async (t: number | Date) => void (alarm = typeof t === "number" ? t : t.getTime()),
-      deleteAlarm: async () => void (alarm = null),
-      getAlarm: async () => alarm,
+      ...storage,
+      transaction: async (run: (tx: typeof storage) => Promise<unknown>) => run(storage),
     },
   } as unknown as DurableObjectState;
 }
