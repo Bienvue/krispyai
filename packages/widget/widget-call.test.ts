@@ -125,12 +125,14 @@ function harness(
         return Promise.resolve();
       },
     };
-    handlers = new Map<string, () => void>();
+    handlers = new Map<string, (...args: unknown[]) => void>();
     disconnected = false;
+    canPlaybackAudio = true;
+    startAudioCalls = 0;
     constructor() {
       rooms.push(this);
     }
-    on(name: string, fn: () => void) {
+    on(name: string, fn: (...args: unknown[]) => void) {
       this.handlers.set(name, fn);
     }
     connect() {
@@ -140,8 +142,14 @@ function harness(
       this.disconnected = true;
       this.handlers.get("disconnected")?.();
     }
-    emit(name: string) {
-      this.handlers.get(name)?.();
+    emit(name: string, ...args: unknown[]) {
+      this.handlers.get(name)?.(...args);
+    }
+    startAudio() {
+      this.startAudioCalls++;
+      this.canPlaybackAudio = true;
+      this.emit("audioPlaybackChanged");
+      return Promise.resolve();
     }
     getActiveDevice(kind: string) {
       return kind === "audioinput" ? "mic-1" : "speaker-1";
@@ -153,7 +161,11 @@ function harness(
   }
   const window = {
     LivekitClient: libraryAvailable
-      ? { Room: FakeRoom, supportsAudioOutputSelection: () => outputSupported }
+      ? {
+          Room: FakeRoom,
+          RoomEvent: { AudioPlaybackStatusChanged: "audioPlaybackChanged" },
+          supportsAudioOutputSelection: () => outputSupported,
+        }
       : null,
     AudioContext: ringAudio,
     addEventListener(name: string, fn: () => void) {
@@ -238,6 +250,7 @@ function harness(
     callControls,
     callExpand,
     callDevices,
+    callAudio,
     click,
     grant,
     connect,
@@ -442,6 +455,46 @@ describe("visitor audio call controller", () => {
     app.renderCall(null);
   });
 
+  test("an operator invitation may ring while the page is hidden", async () => {
+    let tones = 0;
+    class RingAudio {
+      currentTime = 0;
+      destination = {};
+      resume() {
+        return Promise.resolve();
+      }
+      close() {
+        return Promise.resolve();
+      }
+      createOscillator() {
+        return {
+          type: "",
+          frequency: { value: 0 },
+          connect: (gain: object) => gain,
+          start: () => tones++,
+          stop() {},
+        };
+      }
+      createGain() {
+        return {
+          gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} },
+          connect: () => this.destination,
+        };
+      }
+    }
+    const app = harness(true, new Map(), "session", RingAudio);
+    app.document.visibilityState = "hidden";
+    app.renderCall({
+      id: "background-invite",
+      status: "ringing",
+      requestedBy: "operator",
+      expiresAt: Date.now() + 60_000,
+    });
+    await tick();
+    expect(tones).toBe(2);
+    app.renderCall(null);
+  });
+
   test("idle call offer dismisses across rerenders and reloads without touching a real invite", () => {
     const storage = new Map<string, string>();
     const app = harness(true, storage);
@@ -525,6 +578,27 @@ describe("visitor audio call controller", () => {
     expect(app.micCalls).toEqual([true, false, true]);
     app.rooms[0]!.emit("reconnecting");
     expect(app.callTitle.textContent).toBe("Audio call reconnecting");
+  });
+
+  test("blocked guest playback offers a click to start the remote audio", async () => {
+    const app = harness();
+    app.renderCall(accepted);
+    const joining = app.joinCall("call-1");
+    app.grant.resolve({ clientUrl: "library", url: "room", token: "token" });
+    for (let i = 0; i < 10 && !app.rooms.length; i++) await tick();
+    app.connect.resolve();
+    await joining;
+    const room = app.rooms[0]!;
+    room.remoteParticipants.set("operator", {});
+    room.canPlaybackAudio = false;
+    room.emit("audioPlaybackChanged");
+    expect(app.callNote.textContent).toContain("Speaker audio is blocked");
+    app.click("Play call audio");
+    expect(room.startAudioCalls).toBe(1);
+    await tick();
+    expect(app.callControls.children.some((item) => item.textContent === "Play call audio")).toBe(
+      false,
+    );
   });
 
   test("audio settings open only after Join and switch permitted devices without another prompt", async () => {

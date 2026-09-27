@@ -188,12 +188,15 @@ in its inline style, which is what integrators had to do before the class existe
   Grant failures also show a numeric HTTP status when the server returned one,
   including non-JSON errors; a failed connection offers a clearly labeled retry.
   A real incoming invitation rings when browser audio is allowed and notifications
-  are unmuted; Accept and Decline remain visible when autoplay blocks sound.
+  are unmuted, including attempts in hidden tabs; browser autoplay and background
+  restrictions can still prevent sound. Accept and Decline remain visible when
+  autoplay blocks the ringtone.
   Returning visitors with a previously registered call capability keep their
   call socket connected while the page is visible even when chat is closed;
   backgrounding or leaving the page closes it. The server still validates the
   capability before an operator can invite them.
   The call card distinguishes waiting for the team member, connected, and reconnecting.
+  If remote audio playback is blocked, **Play call audio** resumes it from a tap.
   Mute/Unmute and End call remain available during the call. Tap the call card to expand
   audio settings: permitted microphones can be switched without a new permission prompt;
   speaker selection appears only when the browser supports it and has multiple outputs.

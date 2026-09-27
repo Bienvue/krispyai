@@ -58,6 +58,8 @@ function harness(
                   storage.delete("__alarm");
                 },
                 getAlarm: async () => storage.get("__alarm") ?? null,
+                transaction: <T>(run: (tx: DurableObjectStorage) => Promise<T>) =>
+                  run(state.storage),
               },
               getWebSockets: (tag?: string) =>
                 tag === "call-visitor" && visitorOnline ? [{ send: () => {} }] : [],
@@ -99,6 +101,28 @@ function harness(
   };
   return { env, post, register, objects };
 }
+
+test("page-load presence registers a private call visitor before chat", async () => {
+  const h = harness();
+  const body = {
+    tenantId: "self",
+    sessionId: "loaded-course-page",
+    siteId: "course",
+    visitorSecret: secretA,
+  };
+  const first = await h.post("/api/call/presence", body);
+  expect(first.status).toBe(200);
+  expect(await first.json()).toEqual({ ok: true });
+  const state = h.objects.get("self:loaded-course-page")!.storage;
+  expect(state.get("callVisitorSecret")).toBe(secretA);
+  expect(state.get("siteId")).toBe("course");
+  expect((await h.post("/api/call/presence", body)).status).toBe(200);
+  expect((await h.post("/api/call/presence", { ...body, visitorSecret: secretB })).status).toBe(
+    403,
+  );
+  expect((await h.post("/api/call/presence", { ...body, siteId: "other" })).status).toBe(403);
+  expect((await h.post("/api/call/presence", { ...body, visitorSecret: "weak" })).status).toBe(400);
+});
 
 const operator = (action: string, sessionId = "session-a", id?: string) => ({
   tenantId: "acme",

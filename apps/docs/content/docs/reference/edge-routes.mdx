@@ -14,6 +14,7 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 | ------ | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `POST` | `/api/chat`                      | `{ sessionId, message, tenantId?, history? }` → `{ reply, handoff, handoffState, handedOff, degraded?, formId?, form? }`                                                                                                                     |
 | `POST` | `/api/call`                      | Visitor call control with registered `visitorSecret`: `status`, `invite`, `accept`, `decline`, `cancel`, `end`, `grant`. Status includes `availableToRequest`; invite returns a private nonce.                                               |
+| `POST` | `/api/call/presence`             | `{ tenantId, sessionId, siteId?, visitorSecret }` → `{ ok: true }`. Registers the loaded page for operator invitations before chat opens. A conflicting capability or site returns `403`.                                                    |
 | `POST` | `/api/contact`                   | `{ sessionId, tenantId?, name?, contact?, message? }` → `{ ok: true }` — legacy contact-capture shim (maps onto the lead fan-out)                                                                                                            |
 | `POST` | `/api/lead`                      | Configured forms send `{ tenantId?, sessionId, siteId?, formId, values, history, submissionId, visitorSecret }`. A matching visitor capability records labeled fields in the session before `{ ok: true, recorded: true, emailStatus: "sent" | "none" | "delayed" }`; email delay does not discard the operator record. Older clients without both new fields retain legacy email delivery. |
 | `GET`  | `/api/session/:id/ws?t=<tenant>` | WebSocket upgrade → `SessionDO`. `426` if not an upgrade. the visitor's live channel                                                                                                                                                         |
@@ -43,6 +44,13 @@ request sends one push to registered operator devices unless `notifyOnVisitorReq
 false; push delivery runs after the invite response, and repeating the same ringing request
 does not send another. `availableToRequest` in
 visitor `status` says only that a request is allowed, not that an operator is online.
+
+The widget calls `/api/call/presence` when it loads, including while chat is
+closed. The route checks tenant entitlement and binds the first private
+capability to the tenant, session, and site. It returns `400` for invalid input,
+`402` for an unentitled tenant, or `403` for a conflicting registration or site.
+A hidden tab keeps its call socket, but browsers may suspend background pages;
+the widget refreshes the socket when the page becomes visible again.
 
 Both `/api/call` and `/api/operator/call` use `POST` with `{ tenantId, sessionId, action,
 id?, nonce? }`; the visitor also sends its registered `visitorSecret`, while the operator

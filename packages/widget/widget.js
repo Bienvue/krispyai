@@ -130,12 +130,10 @@
   // Call authorization is separate from the chat session ID visible to operators.
   // No weak random fallback: calls stay unavailable without WebCrypto.
   var visitorSecret = null;
-  var restoredVisitorSecret = false;
   if (crypto && crypto.getRandomValues) {
     var callKey = "krispy_call_cap_" + cfg.tenant + "_" + sessionId;
     try {
       visitorSecret = localStorage.getItem(callKey);
-      restoredVisitorSecret = /^[A-Za-z0-9_-]{43}$/.test(visitorSecret || "");
     } catch {
       // Storage can be blocked while WebCrypto still works. Keep the capability
       // in memory for this page so a form-only visitor can submit safely.
@@ -1841,8 +1839,7 @@
           callState.requestedBy === "visitor" ||
           (Number.isFinite(callState.expiresAt) && callState.expiresAt <= Date.now()) ||
           muted ||
-          !soundEnabled ||
-          document.visibilityState !== "visible"
+          !soundEnabled
         )
           return;
         var now = context.currentTime;
@@ -1870,13 +1867,7 @@
   function startIncomingRing(id, expiresAt) {
     if (ringCallId === id) return;
     stopIncomingRing();
-    if (
-      muted ||
-      !soundEnabled ||
-      document.visibilityState !== "visible" ||
-      (Number.isFinite(expiresAt) && expiresAt <= Date.now())
-    )
-      return;
+    if (muted || !soundEnabled || (Number.isFinite(expiresAt) && expiresAt <= Date.now())) return;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;
     try {
@@ -2185,6 +2176,30 @@
           ? (callMicEnabled ? "Microphone on" : "Microphone off") +
             ". Calls work while this page stays in the foreground."
           : "Join when ready. Calls end when this page goes into the background.";
+      if (callRoom && callRoom.canPlaybackAudio === false) {
+        callNote.textContent = "Speaker audio is blocked by your browser. Tap Play call audio.";
+        callButton("Play call audio", true, function () {
+          var room = callRoom;
+          if (!room) return;
+          // LiveKit requires startAudio() directly inside a user gesture.
+          try {
+            Promise.resolve(room.startAudio()).then(
+              function () {
+                if (room === callRoom) renderCall(callState);
+              },
+              function () {
+                if (room === callRoom)
+                  callNote.textContent =
+                    "Speaker audio is still blocked. Check browser sound settings, then try again.";
+              },
+            );
+          } catch {
+            if (room === callRoom)
+              callNote.textContent =
+                "Speaker audio is still blocked. Check browser sound settings, then try again.";
+          }
+        });
+      }
       if (!callRoom && !callJoinPromise)
         callButton(callFailure ? "Try connecting again" : "Join call", true, function () {
           joinCall(next.id).catch(showCallError);
@@ -2299,6 +2314,9 @@
           pendingCallRoom = room;
           room.on("trackSubscribed", function (track) {
             if (active() && track.kind === "audio") callAudio.appendChild(track.attach());
+          });
+          room.on(LK.RoomEvent.AudioPlaybackStatusChanged, function () {
+            if (active()) renderCall(callState);
           });
           room.on("trackUnsubscribed", function (track) {
             track.detach().forEach(function (el) {
@@ -2457,7 +2475,7 @@
   }
 
   function connectWs() {
-    if (pageLeaving || document.visibilityState !== "visible") return;
+    if (pageLeaving) return;
     if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
     try {
       var wsUrl =
@@ -2539,7 +2557,7 @@
         stopIncomingRing(true);
         clearInterval(keepalive);
         keepalive = null;
-        if (pageLeaving || document.visibilityState !== "visible") return;
+        if (pageLeaving) return;
         // Exponential backoff capped at WS_BACKOFF_MAX, ±25% jitter (avoid a
         // thundering-herd reconnect when the edge recovers). Reset on open.
         var delay = wsBackoff * (0.75 + Math.random() * 0.5);
@@ -2569,29 +2587,22 @@
   // Force a reconnect on return so the ready snapshot backfills missed replies.
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState !== "visible") {
-      clearTimeout(wsReconnectTimer);
-      wsReconnectTimer = null;
-      if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
-      stopIncomingRing(true);
+      // A hidden page can still receive an invitation. Browsers may suspend a
+      // background socket, so keep it alive and reconnect when focus returns.
       endCallInBackground();
       return;
     }
-    if (!opened && !restoredVisitorSecret) return;
+    if (!opened && !callVisitorConnected) return;
     if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-      try {
-        ws.close();
-      } catch {
-        /* reconnect below is best-effort */
-      }
-    } else {
-      connectWs();
+      ws.close();
     }
+    connectWs();
   });
   window.addEventListener("pageshow", function () {
     if (!pageLeaving) return;
     // A back-forward-cache restore resumes the same JS realm after pagehide.
     pageLeaving = false;
-    if (document.visibilityState === "visible" && (opened || restoredVisitorSecret)) connectWs();
+    if (opened || callVisitorConnected) connectWs();
   });
 
   var waitingMarked = false;
@@ -3313,9 +3324,29 @@
     sendMessage(text);
   });
 
-  // A returning visitor already owns a session-scoped capability. Reconnect its
-  // authenticated call socket while this page is visible, even before opening
-  // chat. The Durable Object still decides whether the capability was registered;
-  // a fresh, unregistered visitor never claims call presence here.
-  if (restoredVisitorSecret && document.visibilityState === "visible") connectWs();
+  // Register a private call capability as soon as the page loads. Chat can stay
+  // closed; the operator may invite this visitor while the page remains loaded.
+  // A failed registration never marks the socket as call-present.
+  if (visitorSecret) {
+    fetch(cfg.api + "/api/call/presence", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tenantId: cfg.tenant,
+        siteId: cfg.site || undefined,
+        sessionId: sessionId,
+        visitorSecret: visitorSecret,
+      }),
+    })
+      .then(function (response) {
+        if (!response.ok) return;
+        callVisitorConnected = true;
+        // Opening chat before registration may have created an untagged socket.
+        if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
+        connectWs();
+      })
+      .catch(function () {
+        /* Chat stays usable if call presence is temporarily unavailable. */
+      });
+  }
 })();

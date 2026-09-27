@@ -1,0 +1,25 @@
+meta {
+  name: Register visitor call presence
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/api/call/presence
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "tenantId": "self",
+    "sessionId": "sess-demo-1",
+    "visitorSecret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}
+
+docs {
+  The widget calls this on page load, before opening chat. The first private
+  capability owns the session; repeat calls with the same values are idempotent.
+  A connected visitor WebSocket is still required for an operator invitation.
+}
