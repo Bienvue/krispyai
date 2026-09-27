@@ -67,6 +67,9 @@ case "$TARGET" in
     # A new bundle reading a secret the Worker never received fails closed silently;
     # syncing here means code + secrets can't drift apart.
     node scripts/sync-edge-secrets.mjs "$ENV"
+    if [ "$ENV" = production ]; then
+      node scripts/check-hosted-push.mjs
+    fi
     SMOKE_KIND=edge
     ;;
   docs)

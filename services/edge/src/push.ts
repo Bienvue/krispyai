@@ -59,9 +59,12 @@ export async function pushToApp(
     if (!res.ok) throw new Error(`push-tokens fetch failed: ${res.status}`);
     const { tokens } = (await res.json()) as { tokens?: string[] };
     if (!tokens?.length) return 0;
+    // One phone may retain multiple installation rows after reinstall/rotation.
+    // Expo addresses the token, so sending per row would ring that phone twice.
+    const uniqueTokens = [...new Set(tokens)];
 
     const body = text.split("\n", 1)[0]!.slice(0, BODY_MAX);
-    const messages = tokens.map((to) => ({
+    const messages = uniqueTokens.map((to) => ({
       to,
       title:
         metadata?.kind === "first_inquiry"
@@ -80,7 +83,7 @@ export async function pushToApp(
       signal: AbortSignal.timeout(10_000),
     });
     if (!push.ok) throw new Error(`expo push failed: ${push.status}`);
-    return tokens.length;
+    return uniqueTokens.length;
   } catch (e) {
     console.error("pushToApp failed (best-effort, chat and handoff unaffected):", e);
     return 0;

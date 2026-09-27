@@ -291,7 +291,9 @@ no widget embed change is required. The widget limits the displayed label to 24 
 
 The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
 `/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
-server credential. The preview deployment config supplies the preview endpoint.
+server credential. The preview and production deployment configs supply their
+matching endpoints. The hosted edge deploy checks the live production binding
+and the API token-read route after deployment.
 Without the URL, chat and inbox persistence work but mobile push is skipped.
 The first live visitor message claims one inquiry alert per session in the
 Durable Object; a first-turn handoff uses its existing single handoff alert.

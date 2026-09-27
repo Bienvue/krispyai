@@ -3042,6 +3042,21 @@ describe("pushToApp", () => {
     ]);
   });
 
+  test("deduplicates one phone registered under two device IDs", async () => {
+    const { calls, fetchImpl } = capture(["ExponentPushToken[same]", "ExponentPushToken[same]"]);
+    const env = fakeEnv({ PUSH_TOKENS_URL: "https://cloud.test/internal/push-tokens" });
+    expect(await pushToApp(env, "acme", "s-42", "New guest", fetchImpl)).toBe(1);
+    expect(calls[1]!.body).toEqual([
+      {
+        to: "ExponentPushToken[same]",
+        title: "🙋 someone needs you",
+        body: "New guest",
+        sound: "default",
+        data: { sessionId: "s-42" },
+      },
+    ]);
+  });
+
   test("token-endpoint failure → 0, never throws (handoff unaffected)", async () => {
     const { calls, fetchImpl } = capture("fail");
     const env = fakeEnv({ PUSH_TOKENS_URL: "https://cloud.test/x" });
