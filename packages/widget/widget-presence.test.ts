@@ -41,10 +41,10 @@ function mount(restored: boolean) {
   script.dataset.api = "https://edge.example";
   script.dataset.tenant = "tenant";
   Object.defineProperty(window.document, "currentScript", { configurable: true, value: script });
-  const fetches: string[] = [];
-  const fetch = async (url: string) => {
-    fetches.push(url);
-    return { json: async () => ({}) };
+  const fetches: { url: string; body?: string }[] = [];
+  const fetch = async (url: string, init?: { body?: string }) => {
+    fetches.push({ url, body: init?.body });
+    return { ok: true, json: async () => ({ ok: true }) };
   };
   // Mount the complete production widget with a real Shadow DOM and controlled
   // WebSocket transport. Only public synthetic URLs/credentials are used.
@@ -94,11 +94,12 @@ function mount(restored: boolean) {
 test("a restored visitor is call-present while the page is open and chat panel stays closed", async () => {
   const app = mount(true);
   try {
+    await Promise.resolve();
     expect(app.sockets).toHaveLength(1);
     expect(app.sockets[0]!.url).toContain(
       `/api/session/${app.sessionId}/ws?t=tenant&v=${capability}`,
     );
-    expect(app.fetches.some((url) => url.includes("/api/chat"))).toBe(false);
+    expect(app.fetches.some(({ url }) => url.includes("/api/chat"))).toBe(false);
     app.sockets[0]!.receive({
       type: "ready",
       handoffState: "operator",
@@ -114,7 +115,7 @@ test("a restored visitor is call-present while the page is open and chat panel s
       value: "hidden",
     });
     app.window.document.dispatchEvent(new app.window.Event("visibilitychange"));
-    expect(app.sockets[0]!.readyState).toBe(3);
+    expect(app.sockets[0]!.readyState).toBe(1);
     Object.defineProperty(app.window.document, "visibilityState", {
       configurable: true,
       value: "visible",
@@ -134,12 +135,13 @@ test("a restored visitor is call-present while the page is open and chat panel s
   }
 });
 
-test("a new unregistered visitor does not claim call presence before opening chat", async () => {
+test("a new visitor registers call presence when the page loads without opening chat", async () => {
   const app = mount(false);
   try {
-    expect(app.sockets).toHaveLength(0);
-    app.window.krispy?.open();
+    await Promise.resolve();
+    expect(app.fetches.some(({ url }) => url.endsWith("/api/call/presence"))).toBe(true);
     expect(app.sockets).toHaveLength(1);
+    expect(app.window.krispy?.isOpen()).toBe(false);
   } finally {
     void app.window.happyDOM.abort();
   }
@@ -148,6 +150,7 @@ test("a new unregistered visitor does not claim call presence before opening cha
 test("an incoming invite still opens the closed chat panel on a restored page", async () => {
   const app = mount(true);
   try {
+    await Promise.resolve();
     app.sockets[0]!.receive({
       type: "call",
       call: {
@@ -160,7 +163,7 @@ test("an incoming invite still opens the closed chat panel on a restored page", 
     expect(app.window.krispy?.isOpen()).toBe(true);
     expect(app.root.querySelector(".kcall-title")?.textContent).toBe("Incoming audio call");
     expect(app.sockets).toHaveLength(1);
-    expect(app.fetches.some((url) => url.includes("/api/chat"))).toBe(false);
+    expect(app.fetches.some(({ url }) => url.includes("/api/chat"))).toBe(false);
   } finally {
     app.window.dispatchEvent(new app.window.Event("pagehide"));
     void app.window.happyDOM.abort();
@@ -182,6 +185,7 @@ test("buffered receipt replay joins the opened chat in time order without duplic
     revision: 1,
   };
   try {
+    await Promise.resolve();
     app.sockets[0]!.receive({
       type: "ready",
       handoffState: "operator",

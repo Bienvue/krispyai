@@ -250,6 +250,8 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
     if (request.method === "POST" && path === "/api/call")
       return handleCall(request, env, "visitor", ctx);
+    if (request.method === "POST" && path === "/api/call/presence")
+      return handleCallPresence(request, env);
     const nativeInternal = path.match(
       /^\/api\/internal\/call-coordinator\/(availability|start|action|status|grant|revoke-device|offer-validity)$/,
     );
@@ -325,6 +327,52 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
 
     return new Response("not found", { status: 404, headers: cors(env) });
   }
+}
+
+/** Register the page's private call capability without creating a chat message.
+ * The DO keeps the first capability for a session, so knowing an operator-visible
+ * session ID is not enough to replace the visitor. */
+async function handleCallPresence(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: unknown;
+    sessionId?: unknown;
+    siteId?: unknown;
+    visitorSecret?: unknown;
+  } | null;
+  if (
+    !body ||
+    typeof body.tenantId !== "string" ||
+    !body.tenantId ||
+    body.tenantId.length > 200 ||
+    typeof body.sessionId !== "string" ||
+    !body.sessionId ||
+    body.sessionId.length > 200 ||
+    !/^[A-Za-z0-9_-]{43}$/.test(String(body.visitorSecret || ""))
+  )
+    return json(env, { error: "invalid_presence" }, 400);
+  const siteId = siteOr400(env, body.siteId as string | undefined);
+  if (siteId instanceof Response) return siteId;
+  const ent = await entitled(env, body.tenantId);
+  if (!ent.entitled) return json(env, { error: "subscription_required" }, 402);
+  const registered = await doFetch(
+    env,
+    body.tenantId,
+    body.sessionId,
+    "https://do/call/visitor/register",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        secret: body.visitorSecret,
+        tenantId: body.tenantId,
+        sessionId: body.sessionId,
+        siteId: siteId || "default",
+      }),
+    },
+  );
+  if (!registered.ok) return json(env, { error: "presence_unavailable" }, registered.status);
+  const result = (await registered.json()) as { ok?: boolean };
+  return json(env, { ok: result.ok === true }, result.ok ? 200 : 403);
 }
 
 // ── POST /api/chat ───────────────────────────────────────────────────────────

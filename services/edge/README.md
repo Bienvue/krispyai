@@ -64,8 +64,12 @@ queue time or callback promise.
 Cloud calls `/api/internal/call-coordinator/*` with the tenant sync secret and a
 server-resolved operator/device identity; it never forwards a client bearer.
 Guest `/api/call` transitions require the registered session visitor capability,
-tenant/site settings, and private call nonce. The SessionDO persists the call's
-owner/version and projects coordinator status to existing widget sockets. Signed
+tenant/site settings, and private call nonce. The widget registers its private
+capability with `POST /api/call/presence` on page load; chat can also register it
+if initial presence setup fails. Operator invitations require a live visitor
+socket. The widget keeps that socket while hidden, subject to browser background
+suspension. The SessionDO persists the call's owner/version and projects
+coordinator status to existing widget sockets. Signed
 LiveKit webhooks at `/api/livekit/webhook` verify the raw-body hash and HMAC JWT,
 then locate the call in the pilot coordinator and recheck its persisted
 SessionDO owner before advancing media state. Two signed joins

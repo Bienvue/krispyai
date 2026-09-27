@@ -672,12 +672,43 @@ export class SessionDO {
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/call/visitor/register")) {
-      const body = (await request.json().catch(() => ({}))) as { secret?: string };
+      const body = (await request.json().catch(() => ({}))) as {
+        secret?: string;
+        tenantId?: string;
+        sessionId?: string;
+        siteId?: string;
+      };
       if (!body.secret || !/^[A-Za-z0-9_-]{43}$/.test(body.secret))
         return Response.json({ error: "invalid_secret" }, { status: 400 });
-      const registered = await this.state.storage.get<string>("callVisitorSecret");
-      if (!registered) await this.state.storage.put("callVisitorSecret", body.secret);
-      return Response.json({ ok: !registered || registered === body.secret });
+      // The existing internal chat registration supplies only the secret. The
+      // page-load route also binds the tenant/session/site in one transaction.
+      if (!body.tenantId) {
+        const registered = await this.state.storage.get<string>("callVisitorSecret");
+        if (!registered) await this.state.storage.put("callVisitorSecret", body.secret);
+        return Response.json({ ok: !registered || registered === body.secret });
+      }
+      const result = await this.state.storage.transaction(async (tx) => {
+        const [registered, tenantId, sessionId, siteId] = await Promise.all([
+          tx.get<string>("callVisitorSecret"),
+          tx.get<string>("tenantId"),
+          tx.get<string>("sessionId"),
+          tx.get<string>("siteId"),
+        ]);
+        if (
+          (body.tenantId && tenantId && body.tenantId !== tenantId) ||
+          (body.sessionId && sessionId && body.sessionId !== sessionId) ||
+          (body.siteId && siteId && body.siteId !== siteId)
+        )
+          return { error: "session_mismatch" } as const;
+        if (registered && registered !== body.secret) return { ok: false } as const;
+        if (!registered) await tx.put("callVisitorSecret", body.secret);
+        if (body.tenantId && !tenantId) await tx.put("tenantId", body.tenantId);
+        if (body.sessionId && !sessionId) await tx.put("sessionId", body.sessionId);
+        if (body.siteId && !siteId) await tx.put("siteId", body.siteId);
+        return { ok: true } as const;
+      });
+      if ("error" in result) return Response.json(result, { status: 403 });
+      return Response.json(result);
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/lead/delivered")) {

@@ -95,18 +95,17 @@ A real incoming team invitation plays a repeating browser ringtone when sound is
 enabled and the browser permits audio. The visible **Accept** and **Decline**
 controls remain available if autoplay blocks sound. The ringtone stops when the
 invitation is accepted, declined, canceled, expires, or the page/socket leaves.
-The idle call suggestion and a visitor's own request stay silent. Hidden tabs do
-not ring; browser autoplay settings may still prevent audible playback until a
-trusted gesture unlocks audio on that page.
-The widget only attempts silent unlock on widget interaction, including an
-embedder's custom launcher opening the panel; unrelated page clicks do not
-create an audio context.
+The idle call suggestion and a visitor's own request stay silent. The widget
+also attempts to ring in a hidden tab; browser autoplay and background-tab
+restrictions can still prevent audible playback. A trusted interaction anywhere
+on the website can unlock ringing before the visitor opens chat.
 
-After a visitor has registered a call capability through chat, returning to the
-page reconnects its authenticated call socket while the page is visible, even
-with the chat panel closed. The server still verifies the stored capability;
-opening a new, unregistered page does not create call presence. Hidden pages and
-unloaded pages close the socket, and a visible return reconnects it.
+When the widget loads, it registers a private call capability and connects its
+call socket even if chat has never opened. A hidden tab keeps the socket and can
+receive an invitation; a return to the foreground refreshes the connection.
+Browsers may suspend hidden pages, so delivery while backgrounded is best effort.
+Unloading the page closes its socket. Chat registration remains a fallback if
+initial presence registration fails.
 
 The idle **Speak with a team member** suggestion has a **Dismiss call offer**
 button. Dismissal is remembered for the current tenant, site, and chat session,
@@ -129,7 +128,10 @@ controls. The microphone menu lists already permitted inputs and changes the
 active LiveKit track; opening settings does not request microphone permission.
 The speaker menu appears only in browsers that support selecting an audio
 output and report multiple outputs. Otherwise output follows the device's
-system route. Mute and End call remain available in the compact card.
+system route. If the browser blocks remote audio, the call card shows
+**Play call audio**. Tap it to resume the speaker; joining a room does not
+guarantee that the browser allowed playback. Mute and End call remain available
+in the compact card.
 
 ## Local demo
 

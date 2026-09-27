@@ -37,6 +37,42 @@ tags:
     description: Carry a bot token or mutate config — require a shared-secret header.
 
 paths:
+  /api/call/presence:
+    post:
+      tags: [public]
+      summary: Register loaded visitor page for operator call invitations
+      operationId: registerVisitorCallPresence
+      description: >
+        The widget sends its private capability on page load, before chat opens.
+        The first capability is bound to the tenant, session, and site. Repeating
+        the same registration succeeds; a conflicting capability or site fails.
+        A live visitor WebSocket is still required before the operator can invite.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, sessionId, visitorSecret]
+              properties:
+                tenantId: { type: string, maxLength: 200 }
+                sessionId: { type: string, maxLength: 200 }
+                siteId: { type: string }
+                visitorSecret: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+      responses:
+        "200":
+          description: Capability registered or already held by this visitor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean, const: true }
+        "400": { description: "Invalid session, site, tenant, or capability." }
+        "402": { description: "Tenant subscription required." }
+        "403": { description: "Another capability or site already owns this session." }
   /api/call:
     post:
       tags: [public]

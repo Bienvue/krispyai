@@ -16,6 +16,12 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- The visitor widget registers call presence when the page loads and keeps its
+  call socket in a hidden tab, allowing operator invitations before chat opens.
+  Browsers may still suspend background pages; focus refreshes the connection.
+- Guest calls show **Play call audio** when LiveKit reports blocked remote
+  playback, so visitors can resume speaker audio with a direct tap. Incoming
+  invitation ringing is also attempted in hidden tabs when the browser permits.
 - Incoming visitor-call audio can be unlocked by a trusted interaction anywhere
   on the website, including when the chat panel has never been opened. Browser
   autoplay settings may still keep a fresh, untouched page silent; the call
