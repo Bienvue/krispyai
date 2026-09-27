@@ -1,4 +1,4 @@
-// Expo push — the Buttr operator app's out-of-app wake on handoff. Sending is one
+// Expo push — the Buttr operator app's out-of-app wake on a new inquiry or handoff. Sending is one
 // HTTPS POST to the Expo Push Service (brokers both APNs and FCM).
 //
 // The push-token store (operator_push_token) lives in krispyai-cloud, next to the
@@ -9,8 +9,8 @@
 //   hdr  x-push-tokens-secret: <PUSH_TOKENS_SECRET>       (omitted when unset)
 //   →    200  { "tokens": ["ExponentPushToken[...]", ...] }   (empty array = no devices)
 //
-// FAILURE-TOLERANT BY CONTRACT: a push failure must NEVER break the handoff — the DO
-// broadcast + Telegram alert already fired. Everything here is caught and logged; the
+// FAILURE-TOLERANT BY CONTRACT: a push failure must NEVER break chat or handoff.
+// Everything here is caught and logged; the
 // function only ever resolves. Unset PUSH_TOKENS_URL → silent no-op (self-host has no app).
 import type { Env } from "./types";
 import type { FetchLike } from "./telegram";
@@ -19,6 +19,21 @@ const EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send";
 
 /** Push body cap — Expo truncates long bodies anyway; keep the wire payload small. */
 const BODY_MAX = 120;
+
+type PushMetadata =
+  | { kind: "call_request"; callId: string; expiresAt: number }
+  | { kind: "first_inquiry" };
+
+/** The first live guest turn has its own plain title; the handoff title stays unchanged. */
+export function pushInquiryToApp(
+  env: Env,
+  tenantId: string,
+  sessionId: string,
+  text: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<number> {
+  return pushToApp(env, tenantId, sessionId, text, fetchImpl, { kind: "first_inquiry" });
+}
 
 /**
  * Wake the tenant's operator app(s): fetch their Expo push tokens from the cloud,
@@ -31,7 +46,7 @@ export async function pushToApp(
   sessionId: string,
   text: string,
   fetchImpl: FetchLike = fetch,
-  metadata?: { kind: "call_request"; callId: string; expiresAt: number },
+  metadata?: PushMetadata,
 ): Promise<number> {
   try {
     if (!env.PUSH_TOKENS_URL) return 0;
@@ -48,10 +63,15 @@ export async function pushToApp(
     const body = text.split("\n", 1)[0]!.slice(0, BODY_MAX);
     const messages = tokens.map((to) => ({
       to,
-      title: metadata ? "Visitor requested a call" : "🙋 someone needs you",
+      title:
+        metadata?.kind === "first_inquiry"
+          ? "New visitor conversation"
+          : metadata?.kind === "call_request"
+            ? "Visitor requested a call"
+            : "🙋 someone needs you",
       body,
       sound: "default",
-      data: metadata ? { sessionId, ...metadata } : { sessionId },
+      data: metadata?.kind === "call_request" ? { sessionId, ...metadata } : { sessionId },
     }));
     const push = await fetchImpl(EXPO_PUSH_URL, {
       method: "POST",
@@ -62,7 +82,7 @@ export async function pushToApp(
     if (!push.ok) throw new Error(`expo push failed: ${push.status}`);
     return tokens.length;
   } catch (e) {
-    console.error("pushToApp failed (best-effort, handoff unaffected):", e);
+    console.error("pushToApp failed (best-effort, chat and handoff unaffected):", e);
     return 0;
   }
 }

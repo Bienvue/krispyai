@@ -110,17 +110,21 @@ async function rejection(promise: Promise<unknown>): Promise<Error> {
 function fakeDOState(): DurableObjectState {
   const store = new Map<string, unknown>();
   let alarm: number | null = null;
+  const storage = {
+    get: async (k: string) => store.get(k),
+    put: async (k: string, v: unknown) => void store.set(k, v),
+    list: async ({ prefix }: { prefix?: string } = {}) =>
+      new Map([...store].filter(([key]) => !prefix || key.startsWith(prefix))),
+    setAlarm: async (t: number | Date) => void (alarm = typeof t === "number" ? t : t.getTime()),
+    deleteAlarm: async () => void (alarm = null),
+    getAlarm: async () => alarm,
+  };
   return {
     acceptWebSocket: () => {},
     getWebSockets: () => [],
     storage: {
-      get: async (k: string) => store.get(k),
-      put: async (k: string, v: unknown) => void store.set(k, v),
-      list: async ({ prefix }: { prefix?: string } = {}) =>
-        new Map([...store].filter(([key]) => !prefix || key.startsWith(prefix))),
-      setAlarm: async (t: number | Date) => void (alarm = typeof t === "number" ? t : t.getTime()),
-      deleteAlarm: async () => void (alarm = null),
-      getAlarm: async () => alarm,
+      ...storage,
+      transaction: async (run: (tx: typeof storage) => Promise<unknown>) => run(storage),
     },
   } as unknown as DurableObjectState;
 }
@@ -1817,13 +1821,47 @@ describe("SessionDO ring buffer", () => {
         { role: "ai", text: "hello!" },
       ],
     });
-    expect(await res.json()).toEqual({ ok: true, size: 2 });
+    expect(await res.json()).toEqual({ ok: true, size: 2, firstInquiry: true });
     const log = await msgs(do_);
     expect(log.map((m) => [m.role, m.text])).toEqual([
       ["visitor", "hi"],
       ["ai", "hello!"],
     ]);
     expect(typeof log[0]!.ts).toBe("number");
+  });
+
+  test("only the first live visitor turn claims an inquiry, including after ring eviction", async () => {
+    const do_ = new SessionDO(fakeDOState(), env);
+    const append = async (text: string) =>
+      (await post(do_, "/log", { messages: [{ role: "visitor", text }] })).json();
+    expect((await append("first")) as { firstInquiry: boolean }).toMatchObject({
+      firstInquiry: true,
+    });
+    expect((await append("retry")) as { firstInquiry: boolean }).toMatchObject({
+      firstInquiry: false,
+    });
+    for (let i = 0; i < RING_MAX + 1; i++) await append(`later ${i}`);
+    expect((await append("after eviction")) as { firstInquiry: boolean }).toMatchObject({
+      firstInquiry: false,
+    });
+  });
+
+  test("seeded history and AI-only log entries never claim a new inquiry", async () => {
+    const seeded = new SessionDO(fakeDOState(), env);
+    expect(
+      await (
+        await post(seeded, "/log", { messages: [{ role: "visitor", text: "old" }], seed: true })
+      ).json(),
+    ).toMatchObject({ firstInquiry: false });
+    expect(
+      await (
+        await post(seeded, "/log", { messages: [{ role: "visitor", text: "current" }] })
+      ).json(),
+    ).toMatchObject({ firstInquiry: false });
+    const aiOnly = new SessionDO(fakeDOState(), env);
+    expect(
+      await (await post(aiOnly, "/log", { messages: [{ role: "ai", text: "hello" }] })).json(),
+    ).toMatchObject({ firstInquiry: false });
   });
 
   test(`trims to RING_MAX (${RING_MAX}) — oldest evicted`, async () => {
@@ -3020,6 +3058,83 @@ describe("pushToApp", () => {
 });
 
 // ── handoff integration: ring seed + app push + Telegram mention skip ────────
+describe("first guest inquiry → Buttr push", () => {
+  const chat = (sessionId: string, message: string) =>
+    new Request("https://edge.test/api/chat", {
+      method: "POST",
+      body: JSON.stringify({ sessionId, tenantId: "self", message }),
+    });
+
+  test("first message pushes once per session; repeat and refresh keep the same thread quiet", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        PUSH_TOKENS_URL: "https://cloud.test/internal/push-tokens",
+        AI: { run: async () => ({ response: "Happy to help." }) } as unknown as Ai,
+      }),
+    );
+    const calls: { url: string; body: unknown }[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+      if (url.includes("push-tokens")) return Response.json({ tokens: ["ExponentPushToken[x]"] });
+      return Response.json({ data: [{ status: "ok" }] });
+    }) as typeof fetch;
+    try {
+      expect((await worker.fetch(chat("s-one", "What does the course include?"), env)).status).toBe(
+        200,
+      );
+      expect((await worker.fetch(chat("s-one", "And when does it start?"), env)).status).toBe(200);
+      expect((await worker.fetch(chat("s-one", "And when does it start?"), env)).status).toBe(200);
+      expect((await worker.fetch(chat("s-two", "Can I join?"), env)).status).toBe(200);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    const pushes = calls.filter((call) => call.url.includes("exp.host"));
+    expect(pushes).toHaveLength(2);
+    expect(pushes[0]!.body).toEqual([
+      {
+        to: "ExponentPushToken[x]",
+        title: "New visitor conversation",
+        body: "What does the course include?",
+        sound: "default",
+        data: { sessionId: "s-one" },
+      },
+    ]);
+    expect(pushes[1]!.body).toEqual([
+      {
+        to: "ExponentPushToken[x]",
+        title: "New visitor conversation",
+        body: "Can I join?",
+        sound: "default",
+        data: { sessionId: "s-two" },
+      },
+    ]);
+  });
+
+  test("push-token failure does not fail chat or retry on every guest turn", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        PUSH_TOKENS_URL: "https://cloud.test/internal/push-tokens",
+        AI: { run: async () => ({ response: "Happy to help." }) } as unknown as Ai,
+      }),
+    );
+    let tokenFetches = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      tokenFetches += 1;
+      return new Response("unavailable", { status: 503 });
+    }) as unknown as typeof fetch;
+    try {
+      expect((await worker.fetch(chat("s-failure", "First"), env)).status).toBe(200);
+      expect((await worker.fetch(chat("s-failure", "Second"), env)).status).toBe(200);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+    expect(tokenFetches).toBe(1);
+  });
+});
+
 describe("handoff → push + mention skip (integration)", () => {
   test("first-message handoff seeds prior history without duplicating the current visitor turn", async () => {
     const env = wireSessionNS(

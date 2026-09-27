@@ -58,7 +58,8 @@ visitor ──▶ AI answers (Cloudflare Workers AI) ──▶ visitor
 - Visitor types → instant AI reply.
 - Every message mirrors to **one Telegram forum topic per visitor** on your phone.
 - The Buttr operator inbox can list every unresolved conversation, including AI-only
-  chats; phone notifications remain reserved for human handoffs.
+  chats. A hosted app gets one push for a new guest inquiry and another for a later
+  human handoff. Repeated turns in the same session do not send inquiry pushes.
 - Bot-only conversations archive after 24 hours without a new visitor message
   (`AUTO_ARCHIVE_HOURS` changes the window). A new visitor message reopens them.
   Human requests and calls remain visible until a team member archives them.
@@ -391,6 +392,9 @@ The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
 `/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
 server credential. The preview deployment config supplies the preview endpoint.
 Without the URL, chat and inbox persistence work but mobile push is skipped.
+The first live visitor message claims one inquiry alert per session in the
+Durable Object; a first-turn handoff uses its existing single handoff alert.
+The claim records one attempt, so a failed delivery is not retried on later turns.
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not
 prove notification delivery. Self-hosted installations may leave these unset.
