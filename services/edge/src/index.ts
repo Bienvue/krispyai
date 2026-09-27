@@ -748,6 +748,7 @@ async function handleChat(
   // seed the ring from the widget's re-sent history FIRST (the DO no-ops the seed
   // unless the ring is still empty), so pre-ring turns aren't lost.
   const ringStartedAt = performance.now();
+  let firstInquiry = false;
   {
     const seed = result.handoff ? historySeed(clientHistory, message) : [];
     const turn: { role: "visitor" | "ai"; text: string }[] = [{ role: "visitor", text: message }];
@@ -758,12 +759,24 @@ async function handleChat(
         body: JSON.stringify({ messages: seed, seed: true }),
       }).catch((e) => console.error("ring seed failed (best-effort):", e));
     }
-    await doFetch(env, tenantId, body.sessionId, "https://do/log", {
+    const logged = await doFetch(env, tenantId, body.sessionId, "https://do/log", {
       method: "POST",
       body: JSON.stringify({ messages: turn }),
-    }).catch((e) => console.error("ring mirror failed (best-effort):", e));
+    }).catch((e) => {
+      console.error("ring mirror failed (best-effort):", e);
+      return null;
+    });
+    if (logged?.ok) {
+      const ack = (await logged.json().catch(() => null)) as { firstInquiry?: boolean } | null;
+      firstInquiry = ack?.firstInquiry === true;
+    }
   }
   const ringEndedAt = performance.now();
+
+  // The DO claims this once with the first live visitor ring append. Wake Buttr
+  // even when AI answers normally, so a closed operator app sees new inquiries.
+  // A first-turn handoff uses its existing push below to avoid two notifications.
+  if (firstInquiry && !result.handoff) await pushToApp(env, tenantId, body.sessionId, message);
 
   // If the AI escalated, nudge the visitor's browser to open contact capture AND fire
   // the ONE loud handoff alert into the topic — @mentioning the tenant's operators so a

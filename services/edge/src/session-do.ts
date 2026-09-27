@@ -13,7 +13,8 @@
 //   GET  /summary              → { handoffState, handedOff, resolved, lastMessage, ts, siteId }
 //   GET  /identity             → { tenantId, siteId } (operator action scope check)
 //   GET  /log                  → { messages }    (the 20-msg ring — thread read)
-//   POST /log {messages,seed?} → append to the ring (seed: only if the ring is empty)
+//   POST /log {messages,seed?} → append to the ring; returns firstInquiry once per
+//                                session for the operator app's first-message push
 //   POST /operator {text}      → set operator state, broadcast + ring-append operator reply
 //                                (also cancels the silence hand-back alarm)
 //   POST /action {action}      → append a resolved form/Instagram card and broadcast it
@@ -1061,7 +1062,22 @@ export class SessionDO {
         text: m.text,
         ts: m.ts ?? now,
       }));
-      const log = await this.appendRing(appended);
+      // Claim the first live visitor inquiry in the same DO transaction as its ring
+      // append. A refresh, retry, concurrent turn, or later ring eviction cannot
+      // claim it again. Existing conversations without this marker stay quiet.
+      const { log, firstInquiry } = await this.state.storage.transaction(async (tx) => {
+        const log = (await tx.get<RingMsg[]>("log")) ?? [];
+        const firstInquiry =
+          !seed &&
+          log.length === 0 &&
+          appended.some((m) => m.role === "visitor") &&
+          (await tx.get<boolean>("firstInquiryNotified")) !== true;
+        log.push(...appended);
+        while (log.length > RING_MAX) log.shift();
+        await tx.put("log", log);
+        if (firstInquiry) await tx.put("firstInquiryNotified", true);
+        return { log, firstInquiry };
+      });
       // A new LIVE visitor message on a resolved session un-resolves it — the
       // visitor came back, so it belongs in the inbox again. Seed replays are
       // backfill of old turns, not new activity. Un-resolving does NOT re-hand-off:
@@ -1090,7 +1106,7 @@ export class SessionDO {
           broadcast(operators, { type: "message", role: m.role, text: m.text, ts: m.ts });
         }
       }
-      return Response.json({ ok: true, size: log.length });
+      return Response.json({ ok: true, size: log.length, firstInquiry });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/operator")) {
