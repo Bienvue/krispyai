@@ -127,12 +127,11 @@ WT0_OWNER=<agent-or-session-id> node scripts/agent-worktree.mjs start <task-id> 
 
 It fetches `origin/master`, creates an ephemeral managed CoW checkout outside this repo with a
 20G free-space floor and an idempotency key, prepares dependencies, and requires
-doctor's complete thin-runtime promise before returning `ready: true`. Pass the
+doctor's complete thin-runtime promise before returning `ready: true`. The entrypoint
+requires the exact WT0 release in [`.wt0-version`](./.wt0-version). Pass the
 returned absolute `worktree` path to the agent. A failed checkout stays in place
 for repair; retry the same task ID and branch. Keep a long task's lease current with
-`wt0 heartbeat <worktree>`. WT0 0.1.20 provides `automation_ready`, which the
-script requires; its 0.1.19 fallback checks `ready`, `dependency_ready`, and
-`promise.verdict=holds` when an older installation is still present.
+`wt0 heartbeat <worktree>`. The script requires WT0's `automation_ready` verdict.
 
 After the task's PR, tests, and acceptance are assessed, leave that checkout and
 its agent process, then run `node scripts/agent-worktree.mjs assess <worktree>` from

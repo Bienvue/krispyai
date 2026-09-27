@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 // The project entry point for new agent worktrees. WT0 owns the checkout and
-// dependency preparation; this script refuses an incomplete runtime on 0.1.19,
-// before `wt0 run --require-ready` is available in a released version.
+// dependency preparation; this script requires the repo's pinned WT0 release.
 import { createHash } from "node:crypto";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -36,18 +35,20 @@ function wt0Json(args, timeout) {
   return JSON.parse(command("wt0", [...args, "--json"], repo, timeout));
 }
 
+export function assertPinnedWt0Version(reported, pinned) {
+  if (!/^\d+\.\d+\.\d+$/.test(pinned)) throw new Error("Invalid .wt0-version pin");
+  if (reported.trim() !== `wt0 ${pinned}`)
+    throw new Error(`Worktree Zero ${pinned} is required; found ${reported.trim() || "none"}`);
+}
+
+function requirePinnedWt0() {
+  const pinned = readFileSync(join(scriptCheckout, ".wt0-version"), "utf8").trim();
+  assertPinnedWt0Version(command("wt0", ["--version"], repo, 5_000), pinned);
+}
+
 export function readinessDecision(report) {
   if (!report || typeof report !== "object") return { ready: false, source: "invalid" };
-  if (typeof report.automation_ready === "boolean") {
-    return { ready: report.automation_ready, source: "automation_ready" };
-  }
-  const ready =
-    report.ready === true &&
-    report.dependency_ready === true &&
-    report.promise?.verdict === "holds" &&
-    Array.isArray(report.promise.shortfalls) &&
-    report.promise.shortfalls.length === 0;
-  return { ready, source: "0.1.19 doctor fallback" };
+  return { ready: report.automation_ready === true, source: "automation_ready" };
 }
 
 export function safeDestination(root, destination) {
@@ -202,6 +203,7 @@ function assess(inputPath) {
 if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const [action, ...args] = process.argv.slice(2);
+    requirePinnedWt0();
     if (action === "start" && args.length === 2) start(args[0], args[1], process.env.WT0_OWNER);
     else if (action === "assess" && args.length === 1) assess(args[0]);
     else
