@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-09-27
+
 ### Fixed
 
 - Visitor handoff forms now occupy full-width rows, with Instagram links in an
