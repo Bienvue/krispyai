@@ -389,7 +389,9 @@ PRs welcome — this repo is a template people clone, so clarity and convention 
 
 The hosted edge needs `PUSH_TOKENS_URL` set to its matching cloud API
 `/internal/push/tokens` endpoint and `PUSH_TOKENS_SECRET` set to the shared
-server credential. The preview deployment config supplies the preview endpoint.
+server credential. The preview and production deployment configs supply their
+matching endpoints. The production edge deploy checks the live binding and API
+token-read route before it reports success.
 Without the URL, chat and inbox persistence work but mobile push is skipped.
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not

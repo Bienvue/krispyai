@@ -16,6 +16,12 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   earlier wrapper expected objects and rejected clean checkouts even when WT0
   proposed them. New agent checkouts are marked ephemeral for scoped GC review.
 
+### Fixed
+
+- Production hosted edge now binds the Cloud API token lookup for Buttr push and
+  verifies that binding and the authenticated lookup during deployment. Without
+  the URL, handoff push silently skipped every device.
+
 ### Changed
 
 - The visitor widget registers call presence when the page loads and keeps its
