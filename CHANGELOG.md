@@ -21,6 +21,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 - Production hosted edge now binds the Cloud API token lookup for Buttr push and
   verifies that binding and the authenticated lookup during deployment. Without
   the URL, handoff push silently skipped every device.
+- Buttr push deduplicates repeated Expo tokens, so one phone registered under
+  multiple device IDs receives one alert for a new inquiry or handoff.
 
 ### Changed
 
