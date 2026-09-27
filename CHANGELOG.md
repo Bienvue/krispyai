@@ -48,6 +48,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- The hosted Buttr app receives one push for a guest's first live message in a
+  session, even when AI answers. Later turns stay quiet; a first-turn handoff
+  keeps its single existing alert.
+
 - Preview and production Edge deploys can sync the native-call pilot flag, exact
   tenant ID, and Core-to-Cloud push trigger from their own Infisical environments.
 
