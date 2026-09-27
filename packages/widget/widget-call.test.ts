@@ -278,7 +278,7 @@ describe("visitor audio call controller", () => {
     for (let i = 0; i < 10 && !app.micCalls.length; i++) await tick();
     expect(app.micCalls).toEqual([true]);
   });
-  test("trusted user gesture unlocks ringtone silently before an async invite", async () => {
+  test("a trusted page gesture unlocks ringtone before a closed-chat invite", async () => {
     const contexts: Array<{ closed: boolean }> = [];
     let tones = 0;
     class RingAudio {
@@ -317,7 +317,8 @@ describe("visitor audio call controller", () => {
     app.gestures.get("click")?.({ isTrusted: false, composedPath: () => [app.host] });
     expect(contexts).toHaveLength(0);
     app.gestures.get("click")?.({ isTrusted: true, composedPath: () => [{}] });
-    expect(contexts).toHaveLength(0); // unrelated page click
+    await tick();
+    expect(contexts).toHaveLength(1); // visitor used the course page, but never opened chat
     app.gestures.get("click")?.({ isTrusted: true, composedPath: () => [app.host] });
     await tick();
     expect(contexts).toHaveLength(1);
