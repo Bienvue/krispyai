@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-27
+
 - Pinned new agent worktrees to WT0 0.1.20 and removed the older readiness fallback.
 
 - Agent completion assessment now accepts WT0's eligible path strings. The
