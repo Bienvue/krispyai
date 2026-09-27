@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  assertPinnedWt0Version,
   assertReusableDestination,
   cleanupAssessment,
   readinessDecision,
@@ -24,18 +25,18 @@ void test("released WT0 automation verdict takes precedence over old doctor fiel
   });
 });
 
-void test("0.1.19 fallback requires dependencies and the complete thin-runtime promise", () => {
+void test("pinned WT0 refuses older and malformed versions", () => {
+  assert.doesNotThrow(() => assertPinnedWt0Version("wt0 0.1.20\n", "0.1.20"));
+  assert.throws(() => assertPinnedWt0Version("wt0 0.1.19", "0.1.20"), /0\.1\.20 is required/);
+  assert.throws(() => assertPinnedWt0Version("wt0 0.1.21", "0.1.20"), /0\.1\.20 is required/);
+  assert.throws(() => assertPinnedWt0Version("wt0 0.1.20", "latest"), /Invalid/);
+});
+
+void test("doctor without automation_ready is not accepted", () => {
   assert.deepEqual(readinessDecision(complete), {
-    ready: true,
-    source: "0.1.19 doctor fallback",
+    ready: false,
+    source: "automation_ready",
   });
-  assert.equal(readinessDecision({ ...complete, dependency_ready: false }).ready, false);
-  assert.equal(
-    readinessDecision({ ...complete, promise: { verdict: "partial", shortfalls: ["policy"] } })
-      .ready,
-    false,
-  );
-  assert.equal(readinessDecision({ ready: true, dependency_ready: true }).ready, false);
 });
 
 void test("agent destinations must be outside the repo and every node_modules tree", () => {

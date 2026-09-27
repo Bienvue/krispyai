@@ -219,6 +219,9 @@ bun run check         # typecheck + lint + test in one shot
 
 New agent tasks use:
 
+The WT0 entrypoint requires the exact release in [`.wt0-version`](./.wt0-version)
+(currently 0.1.20); upgrade the installed `wt0` before starting a task.
+
 ```sh
 WT0_OWNER=<session-id> node scripts/agent-worktree.mjs start <task-id> <branch>
 ```

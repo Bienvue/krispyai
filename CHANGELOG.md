@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+- Pinned new agent worktrees to WT0 0.1.20 and removed the older readiness fallback.
+
 - Agent completion assessment now accepts WT0's eligible path strings. The
   earlier wrapper expected objects and rejected clean checkouts even when WT0
   proposed them. New agent checkouts are marked ephemeral for scoped GC review.
