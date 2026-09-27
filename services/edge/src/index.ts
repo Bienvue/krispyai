@@ -36,7 +36,7 @@ import { authorizeOperator } from "./operator-auth";
 import { handleOperatorReplyDrafts } from "./reply-drafts";
 import { callRtcAvailable } from "./call-token";
 import { stampSeen, readSeen } from "./liveness";
-import { pushToApp } from "./push";
+import { pushInquiryToApp, pushToApp } from "./push";
 import { leadInboxUrl, renderLeadEmail, sendLeadEmail } from "./email";
 import type { Connector, Env, FormSpec, HandoffState, OperatorAction, TenantConfig } from "./types";
 import {
@@ -776,7 +776,8 @@ async function handleChat(
   // The DO claims this once with the first live visitor ring append. Wake Buttr
   // even when AI answers normally, so a closed operator app sees new inquiries.
   // A first-turn handoff uses its existing push below to avoid two notifications.
-  if (firstInquiry && !result.handoff) await pushToApp(env, tenantId, body.sessionId, message);
+  if (firstInquiry && !result.handoff)
+    await pushInquiryToApp(env, tenantId, body.sessionId, message);
 
   // If the AI escalated, nudge the visitor's browser to open contact capture AND fire
   // the ONE loud handoff alert into the topic — @mentioning the tenant's operators so a

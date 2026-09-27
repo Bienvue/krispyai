@@ -3095,7 +3095,7 @@ describe("first guest inquiry → Buttr push", () => {
     expect(pushes[0]!.body).toEqual([
       {
         to: "ExponentPushToken[x]",
-        title: "🙋 someone needs you",
+        title: "New visitor conversation",
         body: "What does the course include?",
         sound: "default",
         data: { sessionId: "s-one" },
@@ -3104,7 +3104,7 @@ describe("first guest inquiry → Buttr push", () => {
     expect(pushes[1]!.body).toEqual([
       {
         to: "ExponentPushToken[x]",
-        title: "🙋 someone needs you",
+        title: "New visitor conversation",
         body: "Can I join?",
         sound: "default",
         data: { sessionId: "s-two" },

@@ -1064,7 +1064,10 @@ export class SessionDO {
       }));
       // Claim the first live visitor inquiry in the same DO transaction as its ring
       // append. A refresh, retry, concurrent turn, or later ring eviction cannot
-      // claim it again. Existing conversations without this marker stay quiet.
+      // claim it again. This marks an alert attempt, not confirmed delivery: a
+      // failed token/Expo request is intentionally not retried on later turns to
+      // keep normal conversation turns from spamming an operator's phone.
+      // Existing conversations without this marker stay quiet.
       const { log, firstInquiry } = await this.state.storage.transaction(async (tx) => {
         const log = (await tx.get<RingMsg[]>("log")) ?? [];
         const firstInquiry =

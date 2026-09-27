@@ -394,6 +394,7 @@ server credential. The preview deployment config supplies the preview endpoint.
 Without the URL, chat and inbox persistence work but mobile push is skipped.
 The first live visitor message claims one inquiry alert per session in the
 Durable Object; a first-turn handoff uses its existing single handoff alert.
+The claim records one attempt, so a failed delivery is not retried on later turns.
 A signed device build, notification permission, registered device token, and
 valid platform push credentials are also required; simulator chat tests do not
 prove notification delivery. Self-hosted installations may leave these unset.
