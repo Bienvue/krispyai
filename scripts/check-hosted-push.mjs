@@ -33,8 +33,13 @@ const edgeUrl = edge.find((binding) => binding.name === "PUSH_TOKENS_URL");
 if (edgeUrl?.text !== expectedUrl) {
   throw new Error("production edge PUSH_TOKENS_URL does not match wrangler.toml");
 }
-for (const [name, rows] of [["edge", edge], ["api", api]]) {
-  if (!rows.some((binding) => binding.name === "PUSH_TOKENS_SECRET" && binding.type === "secret_text")) {
+for (const [name, rows] of [
+  ["edge", edge],
+  ["api", api],
+]) {
+  if (
+    !rows.some((binding) => binding.name === "PUSH_TOKENS_SECRET" && binding.type === "secret_text")
+  ) {
     throw new Error(`${name} PUSH_TOKENS_SECRET binding is missing`);
   }
 }
