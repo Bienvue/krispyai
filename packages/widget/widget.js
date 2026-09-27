@@ -1801,9 +1801,8 @@
     }
   }
   function unlockIncomingRing(event) {
-    var path = event && typeof event.composedPath === "function" ? event.composedPath() : [];
     if (
-      (event && (!event.isTrusted || path.indexOf(host) < 0)) ||
+      (event && !event.isTrusted) ||
       muted ||
       !soundEnabled ||
       (callState && callState.status === "accepted")
@@ -1813,8 +1812,9 @@
     if (!AC) return;
     try {
       ringContext = ringContext || new AC();
-      // An active widget gesture may unlock future ringing without sound;
-      // calls from async open paths remain subject to browser autoplay policy.
+      // A trusted gesture anywhere on the host page can unlock future ringing.
+      // Visitors may browse the site without opening the chat before an invite;
+      // calls from async open paths still remain subject to browser autoplay.
       Promise.resolve(ringContext.resume()).catch(function () {});
     } catch {
       /* visible call controls remain available */

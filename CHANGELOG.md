@@ -16,6 +16,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Changed
 
+- Incoming visitor-call audio can be unlocked by a trusted interaction anywhere
+  on the website, including when the chat panel has never been opened. Browser
+  autoplay settings may still keep a fresh, untouched page silent; the call
+  invitation remains visible.
 - Accepting a visitor call now begins connecting without a second tap. A failed
   connection offers a clearly labeled retry and retains safe HTTP diagnostics.
 - New agent tasks now use a WT0-backed creation and dependency-preparation gate,
