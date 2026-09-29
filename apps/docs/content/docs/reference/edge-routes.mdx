@@ -22,6 +22,18 @@ one Cloudflare Worker hosts all of these plus the `SessionDO`. CORS allow-origin
 | `GET`  | `/api/usage?t=<tenant>`          | → `{ tenantId, usage: { ai, handoff, tokens }, plan, entitled, status, limits, withinLimits }`                                                                                                                                               |
 | `GET`  | `/health`                        | → `{ status: "ok", service: "edge" }`                                                                                                                                                                                                        |
 
+### Optional visitor name
+
+When `TenantConfig.visitorIdentity.enabled` is true, the widget asks for a name
+after the configured number of visitor messages (1–5). The prompt is optional,
+may be skipped, and has separate English/Hebrew wording. `POST /api/visitor/identity`
+accepts `{ tenantId, siteId?, sessionId, visitorSecret, name }`; the Durable Object
+checks the session-bound visitor capability before saving a trimmed 1–80 character
+name. Neither a session ID alone nor a different site's capability can rename a
+conversation. Operator `handoffs` and `thread` reads return `visitorName` and an
+ISO alpha-2 `countryCode` when Cloudflare supplied one. Country is edge-derived,
+never accepted from the visitor. Unknown countries have no flag.
+
 ### Private image and video attachments
 
 `GET /api/media/capabilities` reports whether this Worker has a private R2 bucket and

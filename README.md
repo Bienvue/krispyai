@@ -201,6 +201,11 @@ The owner app's operator bearer is checked against the cloud API's server-resolv
 so verified teammates can share the owner's handoff inbox. Legacy `/me` responses without
 `tenantId` use a nonempty user-id fallback; malformed identity fields fail closed.
 
+Sites may enable an optional name prompt after a visitor has started chatting. It never
+blocks the first question, and guests may skip it. Saved names travel only with that
+conversation; the operator inbox may also show a country flag when Cloudflare supplies
+a country code. The prompt and its English/Hebrew wording are site settings.
+
 ## Local dev
 
 No Docker, no Tilt, no orchestrator — two `bun` scripts in two terminals:

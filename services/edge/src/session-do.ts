@@ -424,6 +424,14 @@ export class SessionDO {
       const event = readyEvent(handoffState, await this.ring());
       try {
         server.send(JSON.stringify(event));
+        if (operator)
+          server.send(
+            JSON.stringify({
+              type: "identity",
+              visitorName: (await this.state.storage.get<string>("visitorName")) ?? null,
+              countryCode: (await this.state.storage.get<string>("countryCode")) ?? null,
+            }),
+          );
         for (const receipt of await this.callReceipts())
           server.send(JSON.stringify({ type: "call_receipt", receipt }));
         if (operator || callVisitor) {
@@ -1083,6 +1091,54 @@ export class SessionDO {
       return Response.json({ handoffState, handedOff: handoffState === "operator" });
     }
 
+    if (request.method === "POST" && url.pathname.endsWith("/visitor/identity")) {
+      const body = (await request.json().catch(() => null)) as {
+        tenantId?: string;
+        siteId?: string;
+        sessionId?: string;
+        visitorSecret?: string;
+        name?: string;
+      } | null;
+      const name = body?.name?.trim() ?? "";
+      if (
+        !body?.tenantId ||
+        !body.sessionId ||
+        !body.visitorSecret ||
+        name.length < 1 ||
+        name.length > 80 ||
+        Array.from(name).some((char) => {
+          const code = char.charCodeAt(0);
+          return (
+            code < 32 ||
+            code === 127 ||
+            (code >= 0x202a && code <= 0x202e) ||
+            (code >= 0x2066 && code <= 0x2069)
+          );
+        })
+      )
+        return Response.json({ error: "invalid_name" }, { status: 400 });
+      const [tenantId, siteId, sessionId, secret] = await Promise.all([
+        this.state.storage.get<string>("tenantId"),
+        this.state.storage.get<string>("siteId"),
+        this.state.storage.get<string>("sessionId"),
+        this.state.storage.get<string>("callVisitorSecret"),
+      ]);
+      if (
+        tenantId !== body.tenantId ||
+        (siteId || "default") !== body.siteId ||
+        sessionId !== body.sessionId ||
+        secret !== body.visitorSecret
+      )
+        return Response.json({ error: "visitor_auth_required" }, { status: 403 });
+      await this.state.storage.put("visitorName", name);
+      broadcast(this.state.getWebSockets("operator"), {
+        type: "identity",
+        visitorName: name,
+        countryCode: (await this.state.storage.get<string>("countryCode")) ?? null,
+      });
+      return Response.json({ ok: true, name });
+    }
+
     // One combined read for the chat flow: the handoff flag + the ring, so the
     // bot's memory costs the same single subrequest /state used to. POSTed by the chat
     // flow with { tenantId, siteId } so the DO can persist its own identity write-once:
@@ -1094,6 +1150,7 @@ export class SessionDO {
           tenantId?: string;
           siteId?: string;
           sessionId?: string;
+          countryCode?: string;
         };
         if (body.tenantId && !(await this.state.storage.get<string>("tenantId"))) {
           await this.state.storage.put("tenantId", body.tenantId);
@@ -1101,6 +1158,12 @@ export class SessionDO {
         }
         if (body.sessionId && !(await this.state.storage.get<string>("sessionId")))
           await this.state.storage.put("sessionId", body.sessionId);
+        if (
+          body.countryCode &&
+          /^[A-Z]{2}$/.test(body.countryCode) &&
+          !(await this.state.storage.get<string>("countryCode"))
+        )
+          await this.state.storage.put("countryCode", body.countryCode);
       }
       const [handoffState, messages] = await Promise.all([this.handoffState(), this.ring()]);
       return Response.json({
@@ -1132,6 +1195,8 @@ export class SessionDO {
         lastMessage: last?.text ?? null,
         ts: last?.ts ?? null,
         siteId: (await this.state.storage.get<string>("siteId")) ?? "default",
+        visitorName: (await this.state.storage.get<string>("visitorName")) ?? null,
+        countryCode: (await this.state.storage.get<string>("countryCode")) ?? null,
       });
     }
 
@@ -1147,7 +1212,12 @@ export class SessionDO {
         this.threadMessages(),
         this.callReceipts(),
       ]);
-      return Response.json({ messages, callReceipts });
+      return Response.json({
+        messages,
+        callReceipts,
+        visitorName: (await this.state.storage.get<string>("visitorName")) ?? null,
+        countryCode: (await this.state.storage.get<string>("countryCode")) ?? null,
+      });
     }
 
     if (request.method === "POST" && url.pathname.endsWith("/log")) {

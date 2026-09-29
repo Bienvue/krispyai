@@ -564,6 +564,31 @@ describe("tenant config routes", () => {
     });
   });
 
+  test("visitor identity settings are bounded and partial updates preserve wording", async () => {
+    const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
+    const write = (visitorIdentity: unknown) =>
+      worker.fetch(
+        req({
+          path: "/api/tenant/config",
+          method: "POST",
+          headers: authed({ "content-type": "application/json" }),
+          body: JSON.stringify({ tenantId: "t1", config: { visitorIdentity } }),
+        }),
+        env,
+      );
+    expect((await write({ enabled: true, afterMessages: 0 })).status).toBe(400);
+    expect((await write({ enabled: true, promptHe: "" })).status).toBe(400);
+    expect((await write({ enabled: true, prompt: "Your name?", afterMessages: 2 })).status).toBe(
+      200,
+    );
+    expect((await write({ enabled: false })).status).toBe(200);
+    expect((await readTenantConfig(env, "t1"))?.visitorIdentity).toEqual({
+      enabled: false,
+      prompt: "Your name?",
+      afterMessages: 2,
+    });
+  });
+
   test("round-trip: POST then GET returns the merged config", async () => {
     const env = fakeEnv({ TENANT_SYNC_SECRET: SECRET });
     await worker.fetch(
@@ -1950,6 +1975,8 @@ describe("SessionDO ring buffer", () => {
       lastMessage: null,
       ts: null,
       siteId: "default",
+      visitorName: null,
+      countryCode: null,
     });
     await post(do_, "/log", {
       messages: [
@@ -2748,7 +2775,12 @@ describe("operator app routes", () => {
       post("/api/operator/thread", { tenantId: "acme", sessionId: "nope" }),
       env,
     );
-    expect(await res.json()).toEqual({ messages: [], callReceipts: [] });
+    expect(await res.json()).toEqual({
+      messages: [],
+      callReceipts: [],
+      visitorName: null,
+      countryCode: null,
+    });
   });
 });
 

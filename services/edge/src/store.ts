@@ -102,6 +102,12 @@ export function publicWidgetConfig(
         showAfterMs: c.showAfterMs,
       }))
       .filter((c) => c.url !== undefined),
+    visitorIdentity: {
+      enabled: cfg?.visitorIdentity?.enabled === true,
+      prompt: cfg?.visitorIdentity?.prompt || "What should we call you?",
+      promptHe: cfg?.visitorIdentity?.promptHe || "איך קוראים לך?",
+      afterMessages: cfg?.visitorIdentity?.afterMessages ?? 1,
+    },
     // The visitor may choose a configured form while waiting for a person. Keep
     // connector routing server-side; the browser needs only renderable fields.
     forms: (cfg?.forms ?? [])
@@ -267,7 +273,11 @@ export async function mergeTenantConfig(
   for (const [k, v] of Object.entries(patch)) {
     if (v !== undefined)
       (next as Record<string, unknown>)[k] =
-        k === "callSettings" ? { ...next.callSettings, ...(v as TenantConfig["callSettings"]) } : v;
+        k === "callSettings"
+          ? { ...next.callSettings, ...(v as TenantConfig["callSettings"]) }
+          : k === "visitorIdentity"
+            ? { ...next.visitorIdentity, ...(v as TenantConfig["visitorIdentity"]) }
+            : v;
   }
   await env.KRISPY_KV.put(kTenant(tenantId, siteId), JSON.stringify(next));
   return next;
