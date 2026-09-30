@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-09-30
+
 ### Fixed
 
 - CLI package provenance now identifies the `krispyhq/krispyai` repository, and
