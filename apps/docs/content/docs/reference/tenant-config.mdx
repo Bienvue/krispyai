@@ -17,6 +17,12 @@ interface TenantConfig {
   model?: string; // optional model override
   onboardingStep?: number; // onboarding progress (optional; mirrors cloud)
   onboardingComplete?: boolean;
+  visitorIdentity?: {
+    enabled?: boolean; // default false; a name prompt never blocks chat
+    prompt?: string; // English, up to 120 characters
+    promptHe?: string; // Hebrew, up to 120 characters
+    afterMessages?: number; // 1–5 visitor messages; default 1
+  };
   forms?: FormSpec[]; // lead forms
   connectors?: Connector[]; // delivery / CTA connectors
   theme?: WidgetTheme; // widget appearance

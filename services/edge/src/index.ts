@@ -263,6 +263,8 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
       return handleLivekitWebhook(request, env);
 
     if (request.method === "POST" && path === "/api/chat") return handleChat(request, env, ctx);
+    if (request.method === "POST" && path === "/api/visitor/identity")
+      return handleVisitorIdentity(request, env);
     if (request.method === "POST" && path === "/api/call")
       return handleCall(request, env, "visitor", ctx);
     if (request.method === "POST" && path === "/api/call/presence")
@@ -581,6 +583,54 @@ async function handleCall(
   });
 }
 
+async function handleVisitorIdentity(request: Request, env: Env): Promise<Response> {
+  const body = (await request.json().catch(() => null)) as {
+    tenantId?: unknown;
+    siteId?: unknown;
+    sessionId?: unknown;
+    visitorSecret?: unknown;
+    name?: unknown;
+  } | null;
+  if (
+    typeof body?.tenantId !== "string" ||
+    !body.tenantId ||
+    body.tenantId.length > 200 ||
+    typeof body.sessionId !== "string" ||
+    !body.sessionId ||
+    body.sessionId.length > 200 ||
+    (body.siteId !== undefined && typeof body.siteId !== "string") ||
+    typeof body.visitorSecret !== "string" ||
+    !/^[A-Za-z0-9_-]{43}$/.test(body.visitorSecret) ||
+    typeof body.name !== "string" ||
+    body.name.trim().length < 1 ||
+    body.name.trim().length > 80
+  )
+    return json(env, { error: "invalid_visitor_identity" }, 400);
+  const siteId = siteOr400(env, body.siteId as string | undefined);
+  if (siteId instanceof Response) return siteId;
+  const tenant = await getTenant(env, body.tenantId, siteId);
+  if (tenant?.visitorIdentity?.enabled !== true)
+    return json(env, { error: "visitor_identity_disabled" }, 404);
+  const response = await doFetch(
+    env,
+    body.tenantId,
+    body.sessionId,
+    "https://do/visitor/identity",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tenantId: body.tenantId,
+        siteId: siteId || "default",
+        sessionId: body.sessionId,
+        visitorSecret: body.visitorSecret,
+        name: body.name.trim(),
+      }),
+    },
+  );
+  return json(env, await response.json(), response.status);
+}
+
 async function handleChat(
   request: Request,
   env: Env,
@@ -650,9 +700,17 @@ async function handleChat(
     // POST (not GET) so the DO can persist tenantId+siteId write-once — the relearning
     // handback fires from an alarm with no request in flight and the DO can't derive them
     // from its own name. Returns state + messages in the same single subrequest.
+    const cfCountry = (request as Request & { cf?: { country?: unknown } }).cf?.country;
+    const countryCode =
+      typeof cfCountry === "string" &&
+      /^[A-Z]{2}$/.test(cfCountry) &&
+      cfCountry !== "XX" &&
+      cfCountry !== "T1"
+        ? cfCountry
+        : undefined;
     const r = await doFetch(env, tenantId, body.sessionId, "https://do/context", {
       method: "POST",
-      body: JSON.stringify({ tenantId, siteId, sessionId: body.sessionId }),
+      body: JSON.stringify({ tenantId, siteId, sessionId: body.sessionId, countryCode }),
       signal: AbortSignal.timeout(RING_READ_TIMEOUT_MS),
     });
     const raw = (await r.json()) as {
@@ -1725,6 +1783,8 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
         lastMessage: string | null;
         ts: number | null;
         siteId?: string;
+        visitorName?: string | null;
+        countryCode?: string | null;
       };
       const handoffState = s.handoffState ?? (s.handedOff ? "operator" : "ai");
       const resolved = s.resolved === true;
@@ -1740,6 +1800,8 @@ async function handleOperatorHandoffs(request: Request, env: Env): Promise<Respo
             handedOff: s.handedOff,
             ts: s.ts,
             siteId: s.siteId ?? "default",
+            visitorName: s.visitorName ?? null,
+            countryCode: s.countryCode ?? null,
             resolved,
           }
         : null;
@@ -1764,11 +1826,23 @@ async function handleOperatorThread(request: Request, env: Env): Promise<Respons
   const denied = await authorizeOperator(request, env, b.tenantId);
   if (denied) return json(env, { error: denied.error }, denied.status);
   const r = await doFetch(env, b.tenantId, b.sessionId, "https://do/log");
-  const { messages, callReceipts = [] } = (await r.json()) as {
+  const {
+    messages,
+    callReceipts = [],
+    visitorName,
+    countryCode,
+  } = (await r.json()) as {
     messages: unknown[];
     callReceipts?: import("./call-coordinator-model").CallTimelineReceipt[];
+    visitorName?: string | null;
+    countryCode?: string | null;
   };
-  return json(env, { messages, callReceipts });
+  return json(env, {
+    messages,
+    callReceipts,
+    visitorName: visitorName ?? null,
+    countryCode: countryCode ?? null,
+  });
 }
 
 // POST /api/operator/resolve { tenantId, sessionId } → toggle the session's
@@ -1859,6 +1933,28 @@ const AVATAR_SCHEME = /^(https:\/\/|data:image\/(png|webp|jpeg);base64,)/;
 function tenantConfigCapError(
   cfg: Partial<TenantConfig>,
 ): { error: string; status: number } | null {
+  if (cfg.visitorIdentity !== undefined) {
+    const identity = cfg.visitorIdentity;
+    if (
+      !identity ||
+      typeof identity !== "object" ||
+      Array.isArray(identity) ||
+      (identity.enabled !== undefined && typeof identity.enabled !== "boolean") ||
+      (identity.prompt !== undefined &&
+        (typeof identity.prompt !== "string" ||
+          identity.prompt.trim().length === 0 ||
+          identity.prompt.length > 120)) ||
+      (identity.promptHe !== undefined &&
+        (typeof identity.promptHe !== "string" ||
+          identity.promptHe.trim().length === 0 ||
+          identity.promptHe.length > 120)) ||
+      (identity.afterMessages !== undefined &&
+        (!Number.isInteger(identity.afterMessages) ||
+          identity.afterMessages < 1 ||
+          identity.afterMessages > 5))
+    )
+      return { error: "invalid_visitor_identity", status: 400 };
+  }
   if (cfg.callSettings !== undefined) {
     const settings = cfg.callSettings;
     if (

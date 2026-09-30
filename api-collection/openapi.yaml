@@ -496,6 +496,39 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
 
+  /api/visitor/identity:
+    post:
+      tags: [public]
+      summary: Save an optional visitor name for a configured chat
+      operationId: saveVisitorIdentity
+      description: >
+        Requires the session-bound visitor capability created by the chat widget.
+        The site must have visitor identity collection enabled. The name is metadata
+        for the operator inbox, never a chat message or a public profile.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tenantId, sessionId, visitorSecret, name]
+              properties:
+                tenantId: { type: string }
+                siteId: { type: string }
+                sessionId: { type: string }
+                visitorSecret: { type: string, minLength: 43, maxLength: 43 }
+                name: { type: string, minLength: 1, maxLength: 80 }
+      responses:
+        "200":
+          description: Name saved to this conversation.
+        "400":
+          description: Invalid name or request.
+        "403":
+          description: Visitor capability does not own this conversation.
+        "404":
+          description: Visitor identity collection is disabled for this site.
+
   /api/lead:
     post:
       tags: [public]
@@ -675,7 +708,8 @@ paths:
       operationId: widgetConfig
       description: >
         The widget's boot-time read of its appearance/forms. Returns ONLY the whitelist
-        projection (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`) — NEVER
+        projection (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`,
+        `visitorIdentity`) — NEVER
         botToken/chatId/systemPrompt/persona. Do not confuse with the secret-guarded
         `GET /api/tenant/config`, which returns the full config.
       security: [] # public — no auth
@@ -702,6 +736,7 @@ paths:
                       maxImageBytes: { type: integer, const: 10485760 }
                       maxVideoBytes: { type: integer, const: 31457280 }
                   theme: { $ref: "#/components/schemas/WidgetTheme" }
+                  visitorIdentity: { $ref: "#/components/schemas/VisitorIdentitySettings" }
                   ctas:
                     type: array
                     description: "CTA-capable connectors (minus cta:false opt-outs), with server-built href + default label."
@@ -1516,6 +1551,9 @@ components:
             properties:
               sessionId: { type: string }
               siteId: { type: string, description: Session's recorded site (default when absent). }
+              visitorName: { type: [string, "null"], description: Visitor-submitted name, or null. }
+              countryCode:
+                { type: [string, "null"], description: Cloudflare ISO alpha-2 country, or null. }
               lastMessage:
                 type: [string, "null"]
                 description: The ring-buffer tail (null when the ring is empty).
@@ -1545,6 +1583,9 @@ components:
           type: array
           description: Durable typed call records, retained outside the 20-message chat ring.
           items: { $ref: "#/components/schemas/CallTimelineReceipt" }
+        visitorName: { type: [string, "null"], description: Visitor-submitted name, or null. }
+        countryCode:
+          { type: [string, "null"], description: Cloudflare ISO alpha-2 country, or null. }
 
     CallTimelineReceipt:
       type: object
@@ -1912,6 +1953,15 @@ components:
         acceptedAt: { type: integer }
         endedAt: { type: integer }
 
+    VisitorIdentitySettings:
+      type: object
+      description: "Optional, non-blocking visitor-name prompt. Disabled unless enabled is true."
+      properties:
+        enabled: { type: boolean, default: false }
+        prompt: { type: string, maxLength: 120, default: "What should we call you?" }
+        promptHe: { type: string, maxLength: 120, default: "איך קוראים לך?" }
+        afterMessages: { type: integer, minimum: 1, maximum: 5, default: 1 }
+
     TenantConfig:
       type: object
       description: >
@@ -1938,6 +1988,7 @@ components:
             visitorRequestTrigger:
               { type: string, enum: [after_handoff, always], default: after_handoff }
             notifyOnVisitorRequest: { type: boolean, default: true }
+        visitorIdentity: { $ref: "#/components/schemas/VisitorIdentitySettings" }
         forms:
           type: array
           items: { $ref: "#/components/schemas/FormSpec" }

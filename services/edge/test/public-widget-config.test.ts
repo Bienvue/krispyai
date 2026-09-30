@@ -5,6 +5,24 @@ import { publicWidgetConfig } from "../src/store";
 import worker from "../src/index";
 
 describe("publicWidgetConfig", () => {
+  test("name prompt is opt-in and projects only public display settings", () => {
+    expect(publicWidgetConfig(null).visitorIdentity.enabled).toBe(false);
+    expect(
+      publicWidgetConfig({
+        visitorIdentity: {
+          enabled: true,
+          prompt: "What is your name?",
+          promptHe: "איך קוראים לך?",
+          afterMessages: 2,
+        },
+      }).visitorIdentity,
+    ).toEqual({
+      enabled: true,
+      prompt: "What is your name?",
+      promptHe: "איך קוראים לך?",
+      afterMessages: 2,
+    });
+  });
   test("returns theme, NEVER secrets", () => {
     const out = publicWidgetConfig({
       botToken: "x",

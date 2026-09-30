@@ -516,6 +516,7 @@
     // A sent screenshot, in the visitor's own bubble.
     ".msg .shot{display:block;max-width:100%;border-radius:8px;margin:2px 0}" +
     ".msg.kmedia{flex-shrink:0;max-width:min(84%,290px);padding:7px;overflow:hidden}.msg.kmedia img,.msg.kmedia video{display:block;width:100%;max-height:280px;object-fit:contain;border-radius:12px;background:#191623}.msg.kmedia .kmedia-caption{padding:6px 7px 2px;font-size:13px;line-height:1.4}.msg.kmedia .kmedia-error{padding:12px;font-size:12px;color:var(--k-muted-fg)}" +
+    ".kname{flex-shrink:0;align-self:stretch;margin:8px 0;padding:16px;border:1px solid var(--k-border);border-radius:18px;background:var(--k-card);box-shadow:0 8px 24px rgba(36,26,18,.08)}.kname label{display:block;margin-bottom:9px;font-weight:700;color:var(--k-espresso)}.kname input{box-sizing:border-box;width:100%;min-height:44px;padding:9px 12px;border:1px solid var(--k-border);border-radius:12px;background:#fff;color:var(--k-espresso);font:inherit}.kname-actions{display:flex;gap:8px;margin-top:10px}.kname button{min-height:44px;padding:8px 16px;border:1px solid var(--k-border);border-radius:12px;background:var(--k-muted);color:var(--k-espresso);font:inherit;cursor:pointer}.kname button[type=submit]{background:var(--k-primary);border-color:var(--k-primary);color:var(--k-primary-ink);font-weight:700}.kname-error{font-size:12px;color:var(--k-jam);margin-top:7px}" +
     ".kmedia-open{display:block;width:100%;padding:0;border:0;border-radius:12px;background:transparent;cursor:zoom-in}.kmedia-open:focus-visible,.kmedia-viewer button:focus-visible{outline:3px solid var(--k-primary);outline-offset:3px}" +
     ".kmedia-viewer{position:fixed;inset:0;z-index:3;box-sizing:border-box;width:100vw;height:var(--kvvh,100dvh);padding:calc(16px + env(safe-area-inset-top,0px)) 16px calc(16px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:16px;background:rgba(24,20,31,.97);color:#fff;font-family:var(--k-font)}.kmedia-viewer[hidden]{display:none}.kmedia-viewer-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}.kmedia-viewer-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:14px}.kmedia-viewer button{min-height:44px;padding:0 16px;border:1px solid rgba(255,255,255,.3);border-radius:14px;background:rgba(255,255,255,.12);color:#fff;font:inherit;cursor:pointer}.kmedia-viewer img{display:block;flex:1;min-height:0;width:100%;object-fit:contain}" +
     // Drop target — the whole panel, so a dragged file has a big landing zone.
@@ -929,6 +930,26 @@
   // forms, conversation script, popups. ALL default empty → nothing new shows. ──
   var ctas = []; // [{id,type,label,caption,url,showAfterMs}] — server-built https/tel hrefs
   var forms = []; // [{id,title,fields,afterReplyMs,successText}] — boot copy for the afterReplyMs fallback timer
+  var visitorIdentity = {
+    enabled: false,
+    prompt: "What should we call you?",
+    promptHe: "איך קוראים לך?",
+    afterMessages: 1,
+  };
+  var namePromptShown = false;
+  var namePromptCard = null;
+  var visitorTurns = Array.isArray(savedMsgs)
+    ? savedMsgs.filter(function (message) {
+        return message && message.c === "me";
+      }).length
+    : 0;
+  var nameKey = "krispy_visitor_name_" + cfg.tenant + "_" + sessionId;
+  var visitorName = "";
+  try {
+    visitorName = localStorage.getItem(nameKey) || "";
+  } catch {
+    /* storage blocked: prompt once in this page */
+  }
   var opening = []; // script.opening — scripted bot bubbles on panel open (opening[0] supersedes greeting)
   var starters = []; // script.starters — suggested-question chips above the input (max 4)
   var openSource = ""; // popup "source" label — rides into the chat/lead session context when a popup opens the panel
@@ -1104,6 +1125,15 @@
       : "image/png,image/jpeg,image/webp,image/gif";
     if (Array.isArray(c.ctas)) ctas = c.ctas;
     if (Array.isArray(c.forms)) forms = c.forms;
+    if (c.visitorIdentity && c.visitorIdentity.enabled === true) {
+      visitorIdentity = {
+        enabled: true,
+        prompt: String(c.visitorIdentity.prompt || "What should we call you?").slice(0, 120),
+        promptHe: String(c.visitorIdentity.promptHe || "איך קוראים לך?").slice(0, 120),
+        afterMessages: Math.max(1, Math.min(5, Number(c.visitorIdentity.afterMessages) || 1)),
+      };
+      maybeShowNamePrompt();
+    }
     if (c.script) {
       if (Array.isArray(c.script.opening))
         opening = c.script.opening
@@ -3451,6 +3481,16 @@
                 : form.successText || "Thanks — we'll be in touch.";
             wrap.classList.add("done");
             formOpen = false;
+            var leadName = values.name || values.full_name;
+            if (
+              visitorIdentity.enabled &&
+              (!visitorName || visitorName === "__skip__") &&
+              visitorSecret &&
+              leadName
+            )
+              saveVisitorName(leadName).catch(function () {
+                /* lead is saved; a failed optional profile update must not undo it */
+              });
             try {
               sessionStorage.removeItem(submissionKey);
             } catch {
@@ -3470,6 +3510,116 @@
   }
 
   // ── send ─────────────────────────────────────────────────────────────────
+  function saveVisitorName(name) {
+    name = String(name).trim().slice(0, 80);
+    return fetch(cfg.api + "/api/visitor/identity", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        tenantId: cfg.tenant,
+        siteId: cfg.site || undefined,
+        sessionId: sessionId,
+        visitorSecret: visitorSecret,
+        name: name,
+      }),
+    })
+      .then(function (response) {
+        if (!response.ok) throw new Error(String(response.status));
+        return response.json();
+      })
+      .then(function () {
+        visitorName = name;
+        try {
+          localStorage.setItem(nameKey, name);
+        } catch {
+          /* storage blocked */
+        }
+        if (namePromptCard) namePromptCard.remove();
+        namePromptCard = null;
+      });
+  }
+
+  function maybeShowNamePrompt() {
+    if (
+      !visitorIdentity.enabled ||
+      !visitorSecret ||
+      visitorName ||
+      namePromptShown ||
+      visitorTurns < visitorIdentity.afterMessages
+    )
+      return;
+    namePromptShown = true;
+    var hebrew =
+      panel.classList.contains("rtl") || /^he(?:-|$)/i.test(document.documentElement.lang);
+    var card = document.createElement("form");
+    card.className = "kname";
+    namePromptCard = card;
+    var label = document.createElement("label");
+    label.textContent = hebrew ? visitorIdentity.promptHe : visitorIdentity.prompt;
+    var field = document.createElement("input");
+    field.type = "text";
+    field.maxLength = 80;
+    field.autocomplete = "name";
+    field.dir = "auto";
+    field.placeholder = hebrew ? "השם שלכם" : "Your name";
+    label.appendChild(field);
+    card.appendChild(label);
+    var actions = document.createElement("div");
+    actions.className = "kname-actions";
+    var submit = document.createElement("button");
+    submit.type = "submit";
+    submit.textContent = hebrew ? "שמירת שם" : "Save name";
+    var skip = document.createElement("button");
+    skip.type = "button";
+    skip.textContent = hebrew ? "דלגו" : "Skip";
+    actions.appendChild(submit);
+    actions.appendChild(skip);
+    card.appendChild(actions);
+    var error = document.createElement("div");
+    error.className = "kname-error";
+    error.setAttribute("role", "alert");
+    card.appendChild(error);
+    skip.addEventListener("click", function () {
+      visitorName = "__skip__";
+      try {
+        localStorage.setItem(nameKey, visitorName);
+      } catch {
+        /* storage blocked */
+      }
+      card.remove();
+      namePromptCard = null;
+    });
+    card.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var name = field.value.trim();
+      if (!name) {
+        error.textContent = hebrew
+          ? "כתבו שם או דלגו על השלב הזה."
+          : "Please enter a name, or skip this step.";
+        return;
+      }
+      submit.disabled = true;
+      error.textContent = "";
+      saveVisitorName(name)
+        .then(function () {
+          add(
+            "sys",
+            hebrew
+              ? "תודה, " + name + ". הצוות שלנו יוכל לפנות אליכם בשם."
+              : "Thanks, " + name + ". The team can greet you by name now.",
+          );
+        })
+        .catch(function () {
+          submit.disabled = false;
+          error.textContent = hebrew
+            ? "לא הצלחנו לשמור את השם. נסו שוב או דלגו."
+            : "Couldn't save your name. You can try again or skip.";
+        });
+    });
+    log.appendChild(card);
+    card.scrollIntoView({ block: "nearest" });
+  }
+
   // Extracted so starter chips (§3.7) can send too — a chip click IS a visitor
   // message. The FIRST visitor message arms the CTA stagger (§4).
   function sendMessage(text) {
@@ -3477,6 +3627,7 @@
     if (!text) return;
     removeStarters(); // suggested chips are for the empty state only
     add("me", text);
+    visitorTurns++;
     history.push({ role: "user", content: text });
     if (!ctaArmed && ctas.length) armCtas(text); // first visitor message arms CTAs
     sendBtn.disabled = true;
@@ -3530,6 +3681,7 @@
           handoffState = "operator";
           handedOff = true;
           markHuman();
+          maybeShowNamePrompt();
           return;
         } // human owns it — stay silent
         if (responseState === "pending") {
@@ -3562,6 +3714,7 @@
           else markWaiting();
           refreshHandoffChoices();
         }
+        maybeShowNamePrompt();
       })
       .catch(function () {
         if (typing) typing.remove();

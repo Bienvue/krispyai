@@ -18,6 +18,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Optional per-site visitor-name prompt after 1–5 chat messages, with English and
+  Hebrew wording. A session-bound visitor capability saves the name; operator
+  inbox summaries include it and a Cloudflare country code when available.
 - Widget images open in a full-screen viewer with a Save image action. On iOS,
   Save opens the native share sheet; other browsers download the authenticated
   image blob without exposing a public media URL.
