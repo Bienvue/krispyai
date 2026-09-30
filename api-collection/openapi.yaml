@@ -23,7 +23,7 @@ info:
     intentionally NOT documented here — the browser never calls it directly.
   license:
     name: MIT
-    url: https://github.com/lonormaly/krispyai/blob/master/LICENSE
+    url: https://github.com/krispyhq/krispyai/blob/master/LICENSE
 servers:
   - url: http://localhost:8787
     description: local (wrangler dev)

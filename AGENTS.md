@@ -197,7 +197,7 @@ Do these once to make the pipelines above work; agents don't (and can't) do them
 - **npm — first-publish bootstrap for `@krispyai/cli`** (Trusted Publishing can't be configured until the package exists):
   1. Create the npm org/scope (`@krispyai`). Mint a **Classic Automation** token, store it as the repo secret `NPM_TOKEN`.
   2. Temporarily set `NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}` on the publish step (drop `--provenance` for this one run), tag `v0.1.0`, let it publish once.
-  3. On npmjs.com → the `@krispyai/cli` package → **Trusted Publisher**: add this repo (`lonormaly/krispyai`) + workflow file `.github/workflows/publish.yml`.
+  3. On npmjs.com → the `@krispyai/cli` package → **Trusted Publisher**: add this repo (`krispyhq/krispyai`) + workflow file `.github/workflows/publish.yml`.
   4. **Delete** the `NPM_TOKEN` secret and revert step 2. Tokenless (OIDC) forever after.
 
 ## 12. Where to look next

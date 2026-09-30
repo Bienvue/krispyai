@@ -10,7 +10,7 @@
 #   2. Temporarily set NODE_AUTH_TOKEN in the publish step to ${{ secrets.NPM_TOKEN }}
 #      (drop --provenance for this first run), tag v0.1.0, let it publish once.
 #   3. On npmjs.com → the @krispyai/cli package → Settings → Trusted Publisher:
-#      add THIS repo (lonormaly/krispyai) + workflow file `.github/workflows/publish.yml`.
+#      add THIS repo (krispyhq/krispyai) + workflow file `.github/workflows/publish.yml`.
 #   4. DELETE the NPM_TOKEN secret and revert step 2. Tokenless forever after.
 # Full checklist: AGENTS.md → "Release + publishing".
 name: Publish CLI

@@ -10,6 +10,11 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Fixed
+
+- CLI package provenance now identifies the `krispyhq/krispyai` repository, and
+  npm preserves the Bun executable mapping during publication.
+
 ## [0.4.0] — 2026-09-30
 
 ### Fixed

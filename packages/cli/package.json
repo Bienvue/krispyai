@@ -10,15 +10,15 @@
     "self-host",
     "telegram"
   ],
-  "homepage": "https://github.com/lonormaly/krispyai/tree/master/packages/cli#readme",
+  "homepage": "https://github.com/krispyhq/krispyai/tree/master/packages/cli#readme",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lonormaly/krispyai.git",
+    "url": "git+https://github.com/krispyhq/krispyai.git",
     "directory": "packages/cli"
   },
   "bin": {
-    "krispy": "./src/index.ts"
+    "krispy": "src/index.ts"
   },
   "files": [
     "src",
