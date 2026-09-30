@@ -10,6 +10,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-09-30
+
 ### Fixed
 
 - Operator reply drafts request distinct useful approaches and allow a single
