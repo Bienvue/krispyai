@@ -2115,8 +2115,8 @@ async function handleKbDismiss(request: Request, env: Env): Promise<Response> {
 
 // ── GET /api/widget/config ───────────────────────────────────────────────────
 // PUBLIC (CORS-*, no secret): the widget's boot-time read of its appearance/forms.
-// Returns ONLY the whitelist projection (publicWidgetConfig) — NEVER botToken/chatId/
-// systemPrompt. The widget must never reach the secret-guarded GET /api/tenant/config.
+// Returns ONLY the whitelist projection (publicWidgetConfig), plus `retentionDays` when
+// conversation retention is on — NEVER botToken/chatId/systemPrompt. The widget must never reach the secret-guarded GET /api/tenant/config.
 async function handleWidgetConfig(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   const t = url.searchParams.get("t") || DEFAULT_TENANT;
@@ -2139,9 +2139,16 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
     maxImageBytes: IMAGE_MAX_BYTES,
     maxVideoBytes: VIDEO_MAX_BYTES,
   };
-  return Response.json(publicWidgetConfig(cfg, capabilities), {
-    headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" },
-  });
+  // The widget forgets its saved transcript once it is older than this, so a
+  // conversation deleted here isn't sent back by the visitor's browser.
+  const retentionDays = Number(env.CONVERSATION_RETENTION_DAYS);
+  return Response.json(
+    {
+      ...publicWidgetConfig(cfg, capabilities),
+      ...(Number.isFinite(retentionDays) && retentionDays > 0 ? { retentionDays } : {}),
+    },
+    { headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" } },
+  );
 }
 
 // ── GET /api/tenant/liveness ──────────────────────────────────────────────────

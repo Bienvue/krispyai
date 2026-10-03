@@ -194,6 +194,10 @@ also archives eligible older bot-only conversations that predate the timer. The 
 live visitor turn reopens them. Known handoffs, operator messages, and call requests
 stay available for manual archive even after the AI resumes; a legacy conversation
 without enough evidence stays active rather than being archived speculatively.
+With `CONVERSATION_RETENTION_DAYS` set, a conversation is deleted that many days after
+its last message: its Telegram topic, index entries, uploads and stored messages, and
+`GET /api/widget/config` returns `retentionDays` so the widget forgets its saved copy
+at the same age. A visitor who writes again afterward starts a new conversation.
 
 Known business questions stay with the AI. An explicit human request enters `pending` immediately
 without requiring a name, email, phone, or order reference. Only a business-configured form can

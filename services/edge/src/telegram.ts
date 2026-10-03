@@ -81,6 +81,22 @@ export async function createForumTopic(
   return r.message_thread_id;
 }
 
+/** Delete a visitor's forum topic and every message in it (conversation retention).
+ * The bot needs the group's "Delete messages" admin right. */
+export async function deleteForumTopic(
+  token: string,
+  chatId: string,
+  threadId: number,
+  fetchImpl?: FetchLike,
+): Promise<void> {
+  await call(
+    token,
+    "deleteForumTopic",
+    { chat_id: chatId, message_thread_id: threadId },
+    fetchImpl,
+  );
+}
+
 /**
  * Send a message into a visitor's topic. SILENT by default (`disable_notification`):
  * routine mirrors (visitor msgs, bot replies) land in the thread without buzzing the

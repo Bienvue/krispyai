@@ -65,6 +65,9 @@ function storage() {
   const api: DurableObjectStorage = {
     get: async <T = unknown>(key: string) => values.get(key) as T | undefined,
     put: async (key: string, value: unknown) => void values.set(key, value),
+    deleteAll: async () => {
+      values.clear();
+    },
     transaction: <T>(run: (tx: DurableObjectStorage) => Promise<T>) => {
       const work = queue.then(() => run(api));
       queue = work.then(

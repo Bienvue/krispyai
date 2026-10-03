@@ -234,6 +234,10 @@ export interface Env {
   HANDBACK_SILENCE_MINUTES?: string;
   /** Hours without a live visitor turn before a bot-only session is archived (default 24). */
   AUTO_ARCHIVE_HOURS?: string;
+  /** Optional conversation retention: days after a session's last message when it is
+   * deleted everywhere it is held (its Durable Object storage, its KV index entries, its
+   * uploaded media in R2 and its Telegram topic). Unset or 0 keeps sessions, as before. */
+  CONVERSATION_RETENTION_DAYS?: string;
 
   // --- misc ---
   /** CORS allow-origin for the widget. Default "*". Accepts a comma-separated

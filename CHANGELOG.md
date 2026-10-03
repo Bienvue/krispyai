@@ -18,6 +18,10 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   custom-metadata entry are linked under the replies they ground, using the
   stored URL rather than model output. The Workers AI fallback cannot read the
   store.
+- Optional `CONVERSATION_RETENTION_DAYS`: a conversation is deleted that many days
+  after its last message, from Telegram (its topic), KV (its index entries), R2 (its
+  uploads) and its Durable Object storage, and the widget forgets its saved
+  transcript at the same age. Unset keeps conversations, as before.
 
 ## [0.4.1] — 2026-09-30
 

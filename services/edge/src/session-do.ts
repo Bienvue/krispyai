@@ -37,7 +37,18 @@ import type {
   ServerEvent,
   SessionMessage,
 } from "./types";
-import { DO_INTERNAL_HEADER, checkLeadRate, doInternalSecret, readTenantConfig } from "./store";
+import {
+  DO_INTERNAL_HEADER,
+  checkLeadRate,
+  doInternalSecret,
+  getThreadForSession,
+  kConversationSession,
+  kHandoffSession,
+  kSessionToThread,
+  kThreadToSession,
+  readTenantConfig,
+} from "./store";
+import { deleteForumTopic } from "./telegram";
 import { proposeKbSuggestion } from "./learn";
 import {
   currentCall,
@@ -57,7 +68,7 @@ import {
   type CallAuthority,
 } from "./call-authority";
 import type { CoordinatedCall } from "./call-coordinator-model";
-import { IMAGE_MAX_BYTES, MEDIA_ID, VIDEO_MAX_BYTES } from "./media";
+import { IMAGE_MAX_BYTES, MEDIA_ID, VIDEO_MAX_BYTES, mediaObjectKey } from "./media";
 
 interface Sendable {
   send(data: string): void;
@@ -211,7 +222,8 @@ export class SessionDO {
         : call?.status === "accepted"
           ? (call.acceptedAt ?? call.createdAt) + CALL_MAX_DURATION_MS
           : 0;
-    const due = [handoffDue, callDue, cleanupDue, archiveDue, claimDue].filter(
+    const retentionDue = await this.retentionDue();
+    const due = [handoffDue, callDue, cleanupDue, archiveDue, claimDue, retentionDue].filter(
       (n): n is number => typeof n === "number" && n > 0,
     );
     if (due.length) await this.state.storage.setAlarm(Math.min(...due));
@@ -255,6 +267,7 @@ export class SessionDO {
     log.push(...msgs);
     while (log.length > RING_MAX) log.shift();
     await this.state.storage.put("log", log);
+    if (this.retentionMs()) await this.scheduleAlarm();
     return log;
   }
 
@@ -266,6 +279,82 @@ export class SessionDO {
   private archiveMs(): number {
     const hours = Number(this.env.AUTO_ARCHIVE_HOURS);
     return (Number.isFinite(hours) && hours > 0 ? hours : AUTO_ARCHIVE_HOURS) * 60 * 60_000;
+  }
+
+  /** Conversation retention (CONVERSATION_RETENTION_DAYS): 0 keeps sessions forever. */
+  private retentionMs(): number {
+    const days = Number(this.env.CONVERSATION_RETENTION_DAYS);
+    return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60_000 : 0;
+  }
+
+  /** When this session is due for deletion: its retention after its last message. */
+  private async retentionDue(): Promise<number | undefined> {
+    const ms = this.retentionMs();
+    if (!ms) return undefined;
+    const last = (await this.ring()).at(-1)?.ts;
+    return typeof last === "number" ? last + ms : undefined;
+  }
+
+  /**
+   * Deletes the session everywhere it is held once its retention has run out: its
+   * Telegram topic (with every message in it), its KV index entries, its uploaded
+   * media in R2, and this object's storage. A visitor who writes again later starts
+   * a new conversation.
+   * Telegram failing (a topic already deleted by hand, a missing admin right) does
+   * not keep the rest; the topic is left for the group to remove. Returns whether
+   * it deleted.
+   */
+  private async forgetIfExpired(now: number): Promise<boolean> {
+    const due = await this.retentionDue();
+    if (!due || due > now) return false;
+    const tenantId = await this.state.storage.get<string>("tenantId");
+    const sessionId = await this.state.storage.get<string>("sessionId");
+    if (tenantId && sessionId) {
+      const threadId = await getThreadForSession(this.env, tenantId, sessionId);
+      const siteId = await this.state.storage.get<string>("siteId");
+      const telegram =
+        tenantId === "self"
+          ? { botToken: this.env.TELEGRAM_BOT_TOKEN, chatId: this.env.TELEGRAM_CHAT_ID }
+          : await readTenantConfig(this.env, tenantId, siteId || undefined);
+      if (threadId && telegram?.botToken && telegram.chatId) {
+        try {
+          await deleteForumTopic(telegram.botToken, telegram.chatId, threadId);
+        } catch (err) {
+          console.warn("retention: Telegram topic not deleted", String(err));
+        }
+      }
+      await Promise.all([
+        threadId ? this.env.KRISPY_KV.delete(kThreadToSession(tenantId, threadId)) : null,
+        this.env.KRISPY_KV.delete(kSessionToThread(tenantId, sessionId)),
+        this.env.KRISPY_KV.delete(kHandoffSession(tenantId, sessionId)),
+        this.env.KRISPY_KV.delete(kConversationSession(tenantId, sessionId)),
+      ]);
+      // The bytes of every upload; the records naming them go with the storage below.
+      const media = this.env.MEDIA;
+      if (media) {
+        const records = await this.state.storage.list<SessionMessage>({ prefix: "media:record:" });
+        await Promise.all(
+          [...records.values()]
+            .filter((record) => record.media?.id)
+            .map((record) => media.delete(mediaObjectKey(tenantId, sessionId, record.media!.id))),
+        );
+      }
+    }
+    // The outside calls above don't hold this object's input gate, so a message can
+    // land meanwhile. It starts a new retention period: keep the conversation. Its topic,
+    // index entries and uploads are already gone; the next mirror opens a new topic and
+    // the next turn writes the index again, which is acceptable for so rare a race.
+    if (((await this.retentionDue()) ?? 0) > now) return false;
+    for (const ws of this.state.getWebSockets()) {
+      try {
+        ws.close(1000, "conversation expired");
+      } catch {
+        // Already closed.
+      }
+    }
+    await this.state.storage.deleteAll();
+    await this.state.storage.deleteAlarm();
+    return true;
   }
 
   private async hasHumanInquiry(): Promise<boolean> {
@@ -356,6 +445,7 @@ export class SessionDO {
 
   /** Process only the deadlines that have elapsed, then schedule the next one. */
   async alarm(): Promise<void> {
+    if (await this.forgetIfExpired(Date.now())) return;
     await this.callState();
     const now = Date.now();
     const authority = await this.state.storage.get<CallAuthority>("callAuthority");
@@ -534,6 +624,7 @@ export class SessionDO {
         return { created: true, message };
       });
       if (!result.created) return Response.json({ ok: true, ...result });
+      if (this.retentionMs()) await this.scheduleAlarm();
       if (body.actor === "visitor") {
         await this.setHandoffState("pending");
         await this.markHumanInquiry();
@@ -1176,6 +1267,9 @@ export class SessionDO {
     // One inbox-row read: handoff flag + the ring tail — halves the per-session
     // subrequests of the /api/operator/handoffs KV scan vs /state + /log.
     if (request.method === "GET" && url.pathname.endsWith("/summary")) {
+      // A session that went quiet before retention was set has no alarm; the operator
+      // inbox reads every session's summary, which arms it.
+      if (this.retentionMs()) await this.scheduleAlarm();
       if (
         url.searchParams.get("knownHandoff") === "1" &&
         (await this.state.storage.get<boolean>("humanInquiry")) !== true
@@ -1256,6 +1350,7 @@ export class SessionDO {
         if (firstInquiry) await tx.put("firstInquiryNotified", true);
         return { log, firstInquiry };
       });
+      if (this.retentionMs()) await this.scheduleAlarm();
       // A new LIVE visitor message on a resolved session un-resolves it — the
       // visitor came back, so it belongs in the inbox again. Seed replays are
       // backfill of old turns, not new activity. Un-resolving does NOT re-hand-off:

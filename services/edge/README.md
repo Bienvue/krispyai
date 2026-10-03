@@ -128,6 +128,20 @@ session. Handoffs, human replies, and call requests remain available for manual
 resolution even if ownership has returned to AI. An inbox read archives eligible
 older bot-only sessions that predate the timer; it leaves uncertain legacy human
 requests active.
+Optional `CONVERSATION_RETENTION_DAYS` deletes a session that many days after its
+last message (any message, including the handback note), whatever its state: its
+Telegram topic (with every message in it; the bot needs the group's "Delete
+messages" admin right), its KV index entries, its uploaded media in R2, and its
+Durable Object storage, including lead and media records. A failed Telegram delete
+is logged and the rest still goes; a message that lands during the deletion keeps
+the session. Sessions that went quiet before the setting was enabled are armed by
+their next message or by an operator inbox read; without the operator app (Telegram
+only), those are not reached, so delete their topics by hand once. The widget config carries
+`retentionDays`, and the widget forgets its saved transcript once it is that old,
+before the chat is opened (at boot, from the last config it saw), so a deleted conversation is not sent back. Unset,
+sessions are kept as before. Not reached: kbase suggestions already extracted from a
+handback, lead emails already sent, push notifications already delivered, and
+whatever Telegram keeps after a topic is deleted.
 Reply suggestions remain editable and unsent. Checkout links in a suggestion must
 match the tenant's configured sources or validated knowledge gateway context;
 ordinary sentence punctuation after an approved URL does not hide the suggestion.

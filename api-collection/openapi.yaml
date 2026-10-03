@@ -709,7 +709,7 @@ paths:
       description: >
         The widget's boot-time read of its appearance/forms. Returns ONLY the whitelist
         projection (`capabilities`, `theme`, `ctas`, `forms`, `script`, `popups`,
-        `visitorIdentity`) — NEVER
+        `visitorIdentity`), plus `retentionDays` when conversation retention is on — NEVER
         botToken/chatId/systemPrompt/persona. Do not confuse with the secret-guarded
         `GET /api/tenant/config`, which returns the full config.
       security: [] # public — no auth
@@ -763,6 +763,10 @@ paths:
                           items: { $ref: "#/components/schemas/FormField" }
                         successText: { type: string }
                   script: { $ref: "#/components/schemas/ConversationScript" }
+                  retentionDays:
+                    type: integer
+                    minimum: 1
+                    description: "Present when CONVERSATION_RETENTION_DAYS is set. The widget forgets a saved transcript older than this, since the conversation has been deleted."
                   popups:
                     type: array
                     items: { $ref: "#/components/schemas/PopupSpec" }
