@@ -38,8 +38,19 @@ interface TenantConfig {
     visitorRequestTrigger?: "after_handoff" | "always"; // default after_handoff
     notifyOnVisitorRequest?: boolean; // default true; push to registered operator devices
   };
+  availability?: {
+    timezone: string; // IANA, e.g. "America/Denver"; daylight saving follows it
+    hours: { days: number[]; start: string; end: string }[]; // days 0=Sun..6=Sat; "HH:MM", end exclusive
+    holidays?: string[]; // "YYYY-MM-DD" in timezone, closed all day
+  };
 }
 ```
+
+`availability` sets support hours. With it, `GET /api/availability` reports whether a
+teammate is available, each chat turn tells the bot so (online: hand off without offering
+forms; offline: say when to expect a reply and offer the email form), and `/support on|off`
+in the Slack channel overrides the hours for a while. Invalid hours or an unknown timezone
+are refused with `400 invalid_availability`.
 
 For Cloud tenants, `getTenant()` treats the stored config as usable without Telegram:
 the prompt, theme, forms, and Buttr handoff remain active. `botToken` and `chatId` only

@@ -1,0 +1,30 @@
+meta {
+  name: Slack - /support command (availability toggle)
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{baseUrl}}/api/slack/commands
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  command: /support
+  text: on
+  user_id: U0123
+  channel_id: C0123
+}
+
+tests {
+  test("unsigned requests are refused (or 404 without Slack config)", function() {
+    expect([403, 404]).to.include(res.status);
+  });
+}
+
+docs {
+  Slack slash-command endpoint, signed like /api/slack/events. `/support on` marks a
+  teammate available for 4 hours, `/support off` marks support unavailable until the next
+  opening, `/support` reports the status. Only from the configured channel.
+}

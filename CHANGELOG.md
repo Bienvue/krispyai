@@ -12,6 +12,14 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Optional support availability: `availability` in the tenant config (an IANA
+  timezone, weekly hours and holidays) decides whether a teammate is available.
+  `GET /api/availability` returns `{ online, nextOnlineAt }`; each chat turn tells
+  the bot, which hands off without offering forms when someone is online and says
+  when to expect a reply (offering the email form) when nobody is. A `/support`
+  Slack slash command (`POST /api/slack/commands`, from the configured channel)
+  overrides the hours: `on` for four hours, `off` until the next opening, and no
+  argument for the status. The Slack app needs the `commands` scope.
 - Optional `GEMINI_FILE_SEARCH_STORE` for the Gemini pilot: chat turns also
   retrieve from a Gemini File Search store, so the knowledge base can move out of
   `kbSources` instead of riding in every prompt. Documents uploaded with a `url`

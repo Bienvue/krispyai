@@ -10,6 +10,8 @@
 //   POST /api/telegram/webhook         owner replies in a topic → push to visitor
 //   POST /api/slack/events             operator replies in a Slack thread → push to visitor
 //   POST /api/slack/interactions       "Hand back to AI" button → resolve, AI takes over
+//   POST /api/slack/commands           `/support on|off|status` → availability toggle
+//   GET  /api/availability             is a teammate available now, and if not, when
 //   POST /api/operator/reply           operator app reply → visitor (same DO spine)
 //   POST /api/operator/handoffs        operator app inbox (handed-off sessions)
 //   POST /api/operator/thread          one session's ring-buffer messages
@@ -27,6 +29,14 @@ import { TenantCallCoordinatorDO } from "./tenant-call-do";
 import { handleGuestCoordinatedCall, handleInternalCoordinatorCall } from "./native-call-routes";
 import { handleLivekitWebhook } from "./livekit-webhook";
 import { buildPromptLeakScope, buildSystemPrompt } from "./system-prompt";
+import {
+  availabilityAt,
+  availabilityBlock,
+  availabilityConfigError,
+  kAvailability,
+  type AvailabilityOverride,
+} from "./availability";
+import { supportCommand } from "./support-command";
 import {
   parseOwnerReply,
   createForumTopic,
@@ -315,6 +325,8 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
       return handleSlackEvents(request, env);
     if (request.method === "POST" && path === "/api/slack/interactions")
       return handleSlackInteractions(request, env);
+    if (request.method === "POST" && path === "/api/slack/commands")
+      return handleSlackCommand(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
       return handleOperatorReply(request, env);
     if (request.method === "POST" && path === "/api/operator/reply-drafts")
@@ -337,6 +349,8 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
       return handleTenantConfigSet(request, env);
     if (request.method === "GET" && path === "/api/widget/config")
       return handleWidgetConfig(request, env);
+    if (request.method === "GET" && path === "/api/availability")
+      return handleAvailability(request, env);
     if (request.method === "GET" && path === "/api/tenant/liveness")
       return handleTenantLiveness(request, env);
     if (request.method === "GET" && path === "/api/tenant/kb-suggestions")
@@ -854,6 +868,13 @@ async function handleChat(
     siteId,
   );
 
+  // Whether a person can reply now, for this turn's instructions; empty without hours.
+  const availability = availabilityBlock(
+    tenant?.availability,
+    tenant?.availability ? await readAvailabilityOverride(env, tenantId) : null,
+    Date.now(),
+  );
+
   // Telegram and Slack are optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
@@ -862,9 +883,11 @@ async function handleChat(
         tenant?.forms,
         tenant?.persona,
         tenant?.kbSources,
+        availability,
       ),
       // Leak-check only the control/security instructions. The onboarding prompt can
       // also contain business facts, and quoting those is a correct answer, not a leak.
+      // Nor is the availability line: telling the visitor nobody is online is the point.
       leakScope: buildPromptLeakScope(tenant?.forms, tenant?.persona),
       // Ring-derived (or seed) history in; chatFlow applies the sliding window +
       // counts turns (chokepoint).
@@ -1854,6 +1877,35 @@ async function handleSlackInteractions(request: Request, env: Env): Promise<Resp
   return new Response("ok");
 }
 
+// POST /api/slack/commands — `/support on|off|status` sets the availability toggle.
+async function handleSlackCommand(request: Request, env: Env): Promise<Response> {
+  const verified = await slackRequest(request, env);
+  if (verified instanceof Response) return verified;
+  const { slack, raw } = verified;
+  const form = new URLSearchParams(raw);
+  const config = (await readTenantConfig(env, DEFAULT_TENANT))?.availability;
+  const now = Date.now();
+  const { reply, write } = supportCommand(
+    {
+      text: form.get("text") ?? "",
+      userId: form.get("user_id") ?? "",
+      channelId: form.get("channel_id") ?? "",
+    },
+    {
+      supportChannelId: slack.channelId,
+      config,
+      override: await readAvailabilityOverride(env, DEFAULT_TENANT),
+      now,
+    },
+  );
+  if (write)
+    // KV's TTL floor is 60s; availabilityAt checks `until` itself anyway.
+    await env.KRISPY_KV.put(kAvailability(DEFAULT_TENANT), JSON.stringify(write), {
+      expirationTtl: Math.max(60, Math.ceil((write.until - now) / 1000)),
+    });
+  return Response.json(reply);
+}
+
 // ── operator app routes (Buttr) ──────────────────────────────────────────────
 // The native operator app's surface onto the SAME SessionDO handoff spine Telegram
 // uses — a second trigger, zero Telegram interference. Auth (operator-auth.ts):
@@ -2211,6 +2263,10 @@ const AVATAR_SCHEME = /^(https:\/\/|data:image\/(png|webp|jpeg);base64,)/;
 function tenantConfigCapError(
   cfg: Partial<TenantConfig>,
 ): { error: string; status: number } | null {
+  if (cfg.availability !== undefined) {
+    const bad = availabilityConfigError(cfg.availability);
+    if (bad) return { error: bad, status: 400 };
+  }
   if (cfg.visitorIdentity !== undefined) {
     const identity = cfg.visitorIdentity;
     if (
@@ -2427,6 +2483,39 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
       ...(Number.isFinite(retentionDays) && retentionDays > 0 ? { retentionDays } : {}),
     },
     { headers: { ...cors(env), "Cache-Control": "public, max-age=0, must-revalidate" } },
+  );
+}
+
+/** The `/support on|off` toggle, or null when unset, unreadable or expired. */
+export async function readAvailabilityOverride(
+  env: Env,
+  tenantId: string,
+): Promise<AvailabilityOverride | null> {
+  const raw = await env.KRISPY_KV.get(kAvailability(tenantId));
+  const o = parseJson(raw) as AvailabilityOverride | null;
+  return o && typeof o.online === "boolean" && typeof o.until === "number" && o.until > Date.now()
+    ? o
+    : null;
+}
+
+// ── GET /api/availability ────────────────────────────────────────────────────
+// Public: whether a teammate is available now and, if not, when. Status and a
+// time only; how it was decided (hours or toggle) stays private.
+async function handleAvailability(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  const t = url.searchParams.get("t") || DEFAULT_TENANT;
+  const siteId = siteOr400(env, url.searchParams.get("s"));
+  if (siteId instanceof Response) return siteId;
+  const cfg = await readTenantConfig(env, t, siteId);
+  const status = cfg?.availability
+    ? availabilityAt(cfg.availability, await readAvailabilityOverride(env, t), Date.now())
+    : null;
+  return Response.json(
+    {
+      online: status ? status.online : null,
+      nextOnlineAt: status?.nextOnlineAt ? new Date(status.nextOnlineAt).toISOString() : null,
+    },
+    { headers: { ...cors(env), "Cache-Control": "public, max-age=60" } },
   );
 }
 

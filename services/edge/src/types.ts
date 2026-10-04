@@ -1,6 +1,8 @@
 // Shared types + the tenant seam. Everything is keyed by tenantId (default "self")
 // so the single-tenant self-host and a future multi-tenant SaaS are the same code.
 
+import type { AvailabilityConfig } from "./availability";
+
 // ── Connectors + Lead (Feature A) ─────────────────────────────────────────
 export type FieldType = "text" | "email" | "tel" | "textarea" | "select";
 export interface FormField {
@@ -146,6 +148,8 @@ export interface TenantConfig {
     visitorRequestTrigger?: "after_handoff" | "always";
     notifyOnVisitorRequest?: boolean;
   };
+  /** Support hours; with a toggle override in KV, decides whether a teammate is available. Absent: off. */
+  availability?: AvailabilityConfig;
   /** Telegram bot token (BotFather). Optional for app-only Cloud tenants. */
   botToken?: string;
   /** Target supergroup id WITH topics enabled. Optional for app-only Cloud tenants. */

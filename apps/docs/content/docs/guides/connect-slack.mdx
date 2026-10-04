@@ -39,11 +39,18 @@ Slack is on when all three are set, for the built-in `self` tenant.
   text is escaped, so typing `<!channel>` can't ping anyone.
 - **handoff:** the alert pings `@channel`, shows in the channel as well as the thread, and
   carries a **Hand back to AI** button (Slack doesn't run slash commands in threads, so
-  there is no `/done`). if the alert couldn't be posted (Slack down, or the bot not yet in
+  there is no `/done`; the one slash command, `/support`, is run in the channel itself). if the alert couldn't be posted (Slack down, or the bot not yet in
   the channel), it's posted with the visitor's next message.
 - **replies:** a reply in the thread reaches the visitor, links and formatting turned into
   plain text.
 - **screenshots and lead forms** land in the thread.
+- **availability:** with `availability` hours in the tenant config, `/support on` in the
+  channel marks you available for four hours, `/support off` marks support unavailable
+  until the next opening, and `/support` shows the status; the channel sees each change,
+  and both expire on their own. the bot and `GET /api/availability` follow it. the
+  manifest includes the command and its `commands` scope; an app created before them needs
+  the `/support` command (request URL `https://YOUR-WORKER/api/slack/commands`) and the
+  scope added in its settings, then a reinstall.
 - **retention:** the Worker never deletes Slack messages. set the workspace's (or, on a
   paid plan, the channel's) message retention to match `CONVERSATION_RETENTION_DAYS`. if
   Slack deletes a thread's root while the conversation is still going, the next message

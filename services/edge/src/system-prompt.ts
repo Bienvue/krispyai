@@ -91,13 +91,15 @@ export function buildSystemPrompt(
   forms?: FormRef[],
   persona?: PersonaSpec,
   kbSources?: KbSource[],
+  availability = "",
 ): string {
   const base = custom?.trim() ? custom.trim() : DEFAULT_PROMPT;
   // Keep the security rules unconditional. Restate the complete handoff decision last,
   // after knowledge and generic caution, so a supported negative answer is not mistaken
   // for missing information. This changes the model's decision, not server-side parsing
-  // or the explicit-human/outage fallback paths.
-  return `${base}${personaBlock(persona)}${knowledgeBlock(kbSources)}${formsBlock(forms)}\n\n${SECURITY_INSTRUCTION}\n\n${BREVITY_INSTRUCTION}\n\n${HANDOFF_INSTRUCTION}`;
+  // or the explicit-human/outage fallback paths. Availability is per turn and comes just
+  // before the handoff rules it qualifies.
+  return `${base}${personaBlock(persona)}${knowledgeBlock(kbSources)}${formsBlock(forms)}\n\n${SECURITY_INSTRUCTION}\n\n${BREVITY_INSTRUCTION}${availability}\n\n${HANDOFF_INSTRUCTION}`;
 }
 
 /** Instruction-only scope for output leak detection. Custom system prompts often

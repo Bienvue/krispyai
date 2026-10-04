@@ -1,8 +1,21 @@
 {
   "display_information": { "name": "Krispy handoffs" },
-  "features": { "bot_user": { "display_name": "krispy", "always_online": true } },
+  "features": {
+    "bot_user": { "display_name": "krispy", "always_online": true },
+    "slash_commands": [
+      {
+        "command": "/support",
+        "url": "https://YOUR-WORKER/api/slack/commands",
+        "description": "Go on or off support, or see who's available",
+        "usage_hint": "on | off",
+        "should_escape": false
+      }
+    ]
+  },
   "oauth_config": {
-    "scopes": { "bot": ["chat:write", "files:write", "channels:history", "groups:history"] }
+    "scopes": {
+      "bot": ["chat:write", "files:write", "channels:history", "groups:history", "commands"]
+    }
   },
   "settings": {
     "event_subscriptions": {

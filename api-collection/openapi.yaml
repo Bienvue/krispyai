@@ -701,6 +701,30 @@ paths:
         "403": { description: "Conversation authorization denied." }
         "404": { description: "Object missing or expired." }
 
+  /api/availability:
+    get:
+      tags: [public]
+      summary: Is a teammate available now, and if not, when
+      operationId: availability
+      description: >
+        From the tenant's `availability` hours and the `/support on|off` toggle set in
+        Slack. `online` is null when the tenant has no `availability` config;
+        `nextOnlineAt` is set only when offline. Cached for 60 seconds.
+      security: [] # public — no auth
+      parameters:
+        - $ref: "#/components/parameters/Tenant"
+      responses:
+        "200":
+          description: The status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [online, nextOnlineAt]
+                properties:
+                  online: { type: [boolean, "null"] }
+                  nextOnlineAt: { type: [string, "null"], format: date-time }
+
   /api/widget/config:
     get:
       tags: [public]
@@ -1320,6 +1344,38 @@ paths:
       responses:
         "200":
           description: "`ok`."
+        "403":
+          description: Missing, wrong or stale Slack signature.
+        "404":
+          description: Slack is not configured.
+
+  /api/slack/commands:
+    post:
+      tags: [secret-guarded]
+      summary: "`/support on|off|status` → availability toggle"
+      operationId: slackCommands
+      description: >
+        Slack's slash-command endpoint, signed like /api/slack/events. From the configured
+        channel only: `on` marks a teammate available for 4 hours, `off` marks support
+        unavailable until the next opening in the tenant's `availability` hours (24 hours if
+        none in two weeks), and no argument (or `status`) reports the status. Changes and the
+        status answer in the channel (`in_channel`); errors are `ephemeral`.
+      security:
+        - slackSignature: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                command: { type: string }
+                text: { type: string }
+                user_id: { type: string }
+                channel_id: { type: string }
+      responses:
+        "200":
+          description: "`{ response_type, text }` for Slack to post."
         "403":
           description: Missing, wrong or stale Slack signature.
         "404":

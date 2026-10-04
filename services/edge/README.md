@@ -37,6 +37,13 @@ and replies in the thread reach the visitor. Set `SLACK_BOT_TOKEN`, `SLACK_CHANN
 and `SLACK_SIGNING_SECRET`, and create the app from
 [`slack-manifest.json`](./slack-manifest.json). See `docs → connect Slack`.
 
+**Availability.** With `availability` in the tenant config (a timezone, weekly hours and
+optional holidays), `GET /api/availability` says whether a teammate is available and, if
+not, when, and the bot tells visitors the same. In the support channel, `/support on` marks
+you available for four hours, `/support off` marks support unavailable until the next
+opening, and `/support` shows the status. The app needs the `commands` scope and the
+`/support` command from the manifest; an existing app needs both added and a reinstall.
+
 ## Endpoints
 
 ### Gated native and guest call coordinator
@@ -171,6 +178,8 @@ from Gemini for this action only; normal visitor chat keeps its existing output 
 | POST     | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
 | POST     | `/api/slack/events`              | operator's Slack thread reply → push to visitor via DO                                                   |
 | POST     | `/api/slack/interactions`        | "Hand back to AI" button → resolve, AI takes over                                                        |
+| POST     | `/api/slack/commands`            | `/support on\|off\|status` → availability toggle                                                        |
+| GET      | `/api/availability`              | is a teammate available now, and if not, when                                                            |
 | POST     | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
 | GET      | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
 | POST     | `/api/tenant/config`             | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here _(secret-guarded)_ |
