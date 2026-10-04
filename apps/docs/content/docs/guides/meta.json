@@ -4,6 +4,7 @@
     "self-host-the-edge",
     "embed-and-theme",
     "connect-telegram",
+    "connect-slack",
     "lead-forms-and-connectors",
     "customize-the-prompt"
   ]

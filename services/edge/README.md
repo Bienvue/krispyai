@@ -31,6 +31,19 @@ works with no public username). Operators are **auto-learned**: whoever replies 
 a managed topic is upserted (capped at 10). No operators yet → the alert still
 fires, just without a mention. See `docs → connect Telegram`.
 
+**Slack** is the other optional operator channel: each conversation is a thread in one
+channel, the handoff alert pings `@channel` and carries a **Hand back to AI** button,
+and replies in the thread reach the visitor. Set `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`
+and `SLACK_SIGNING_SECRET`, and create the app from
+[`slack-manifest.json`](./slack-manifest.json). See `docs → connect Slack`.
+
+**Availability.** With `availability` in the tenant config (a timezone, weekly hours and
+optional holidays), `GET /api/availability` says whether a teammate is available and, if
+not, when, and the bot tells visitors the same. In the support channel, `/support on` marks
+you available for four hours, `/support off` marks support unavailable until the next
+opening, and `/support` shows the status. The app needs the `commands` scope and the
+`/support` command from the manifest; an existing app needs both added and a reinstall.
+
 ## Endpoints
 
 ### Gated native and guest call coordinator
@@ -128,6 +141,22 @@ session. Handoffs, human replies, and call requests remain available for manual
 resolution even if ownership has returned to AI. An inbox read archives eligible
 older bot-only sessions that predate the timer; it leaves uncertain legacy human
 requests active.
+Optional `CONVERSATION_RETENTION_DAYS` deletes a session that many days after its
+last message (any message, including the handback note), whatever its state: its
+Telegram topic (with every message in it; the bot needs the group's "Delete
+messages" admin right), its KV index entries, its uploaded media in R2, and its
+Durable Object storage, including lead and media records. A failed Telegram delete
+is logged and the rest still goes; a message that lands during the deletion keeps
+the session. Sessions that went quiet before the setting was enabled are armed by
+their next message or by an operator inbox read; without the operator app (Telegram
+only), those are not reached, so delete their topics by hand once. The widget config carries
+`retentionDays`, and the widget forgets its saved transcript once it is that old,
+before the chat is opened (at boot, from the last config it saw), so a deleted conversation is not sent back. Unset,
+sessions are kept as before. Not reached: kbase suggestions already extracted from a
+handback, lead emails already sent, push notifications already delivered, and
+whatever Telegram keeps after a topic is deleted. Slack's copies are not deleted by
+the Worker (a bot can't delete operators' messages): set the workspace's, or on a paid
+plan the channel's, message retention to the same period.
 Reply suggestions remain editable and unsent. Checkout links in a suggestion must
 match the tenant's configured sources or validated knowledge gateway context;
 ordinary sentence punctuation after an approved URL does not hide the suggestion.
@@ -147,6 +176,10 @@ from Gemini for this action only; normal visitor chat keeps its existing output 
 | POST     | `/api/operator/media`            | bearer or tenant-sync authenticated image/video upload to an existing thread                             |
 | GET/HEAD | `/api/media/:id?t=…&s=…`         | private conversation-scoped bytes/metadata; GET supports a single video byte range                       |
 | POST     | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
+| POST     | `/api/slack/events`              | operator's Slack thread reply → push to visitor via DO                                                   |
+| POST     | `/api/slack/interactions`        | "Hand back to AI" button → resolve, AI takes over                                                        |
+| POST     | `/api/slack/commands`            | `/support on\|off\|status` → availability toggle                                                        |
+| GET      | `/api/availability`              | is a teammate available now, and if not, when                                                            |
 | POST     | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
 | GET      | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
 | POST     | `/api/tenant/config`             | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here _(secret-guarded)_ |
@@ -243,7 +276,19 @@ malformed identity fields fail closed.
   The key stays server-side. If it is missing or Google fails, that Delulus turn
   falls back to the existing Cloudflare 70B model; human handoff still applies
   if both providers fail. No tenant is
-  switched by merely deploying the adapter. The bracketed `[!HANDOFF]` marker
+  switched by merely deploying the adapter. Setting the optional
+  `GEMINI_FILE_SEARCH_STORE` (`fileSearchStores/…`) makes that pilot's chat turns
+  also retrieve from a Gemini File Search store through the native
+  `generateContent` API; structured operator drafts keep the OpenAI-compatible
+  path. The store adds to the prompt and does not replace `kbSources`: move the
+  knowledge into the store and shrink or empty `kbSources` to stop sending it on
+  every turn. The 70B fallback cannot read the store, so with `kbSources` empty a
+  turn that falls back has no business facts; keep the essentials in `kbSources`,
+  or instruct the bot to hand off when it has none. A stored document uploaded
+  with a `url` custom-metadata entry is appended as a Markdown link (its display
+  name, at most two per reply) under the answers it grounds. Those appended links
+  take their URL from the store, never from model output, and are left off when
+  the reply hands off or raises a form. The bracketed `[!HANDOFF]` marker
   remains canonical; a bare terminal
   `!HANDOFF` is accepted only as a compatibility variant when sentence-standalone.
   The explicitly selected `@cf/meta/llama-3.1-8b-instruct-fast` candidate uses temperature

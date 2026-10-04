@@ -1,6 +1,8 @@
 // Shared types + the tenant seam. Everything is keyed by tenantId (default "self")
 // so the single-tenant self-host and a future multi-tenant SaaS are the same code.
 
+import type { AvailabilityConfig } from "./availability";
+
 // ── Connectors + Lead (Feature A) ─────────────────────────────────────────
 export type FieldType = "text" | "email" | "tel" | "textarea" | "select";
 export interface FormField {
@@ -146,6 +148,8 @@ export interface TenantConfig {
     visitorRequestTrigger?: "after_handoff" | "always";
     notifyOnVisitorRequest?: boolean;
   };
+  /** Support hours; with a toggle override in KV, decides whether a teammate is available. Absent: off. */
+  availability?: AvailabilityConfig;
   /** Telegram bot token (BotFather). Optional for app-only Cloud tenants. */
   botToken?: string;
   /** Target supergroup id WITH topics enabled. Optional for app-only Cloud tenants. */
@@ -211,10 +215,21 @@ export interface Env {
   TELEGRAM_CHAT_ID?: string;
   /** Shared secret echoed by Telegram in X-Telegram-Bot-Api-Secret-Token. */
   TELEGRAM_WEBHOOK_SECRET?: string;
+  /** Slack handoffs (optional, the "self" tenant): the app's bot token (`xoxb-…`). */
+  SLACK_BOT_TOKEN?: string;
+  /** The channel handoff threads are posted to; the bot must be a member. */
+  SLACK_CHANNEL_ID?: string;
+  /** Verifies requests from Slack (Basic Information → Signing Secret). */
+  SLACK_SIGNING_SECRET?: string;
   SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
   /** Server-only Gemini API key for the exact KNOWLEDGE_TENANT_ID/SITE_ID pilot. */
   GEMINI_API_KEY?: string;
+  /** Optional Gemini File Search store (`fileSearchStores/…`) for the same pilot.
+   * When set, chat turns also retrieve from the store, so the knowledge can move
+   * out of `kbSources`; the Workers AI fallback cannot read it. A document uploaded
+   * with a `url` custom-metadata entry is linked under the replies it grounds. */
+  GEMINI_FILE_SEARCH_STORE?: string;
   // --- turn-tax cost knobs (all optional; sensible defaults in code) ---
   /** Sliding-window size the AI sees, default MAX_HISTORY_MSGS (8). */
   MAX_HISTORY_MSGS?: string;
@@ -229,6 +244,11 @@ export interface Env {
   HANDBACK_SILENCE_MINUTES?: string;
   /** Hours without a live visitor turn before a bot-only session is archived (default 24). */
   AUTO_ARCHIVE_HOURS?: string;
+  /** Optional conversation retention: days after a session's last message when it is
+   * deleted everywhere it is held (its Durable Object storage, its KV index entries, its
+   * uploaded media in R2 and its Telegram topic). Slack's copies go by the workspace's own
+   * retention setting instead. Unset or 0 keeps sessions, as before. */
+  CONVERSATION_RETENTION_DAYS?: string;
 
   // --- misc ---
   /** CORS allow-origin for the widget. Default "*". Accepts a comma-separated

@@ -1,0 +1,33 @@
+meta {
+  name: Slack - events (url_verification)
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{baseUrl}}/api/slack/events
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "type": "url_verification",
+    "challenge": "challenge-demo"
+  }
+}
+
+tests {
+  test("unsigned requests are refused (or 404 without Slack config)", function() {
+    expect([403, 404]).to.include(res.status);
+  });
+}
+
+docs {
+  Slack Events API endpoint. Every request must carry Slack's v0 signature
+  (x-slack-signature, x-slack-request-timestamp), so this unsigned request is refused:
+  403 with Slack configured, 404 without. Signed by Slack, it answers url_verification
+  with { challenge } and turns a person's reply in a handoff thread into a message to the
+  visitor. Each event_id is delivered once: a redelivery is ack'd and ignored, and a
+  delivery that fails answers 500 so Slack retries it.
+}

@@ -10,6 +10,45 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ## [Unreleased]
 
+### Added
+
+- Optional support availability: `availability` in the tenant config (an IANA
+  timezone, weekly hours and holidays) decides whether a teammate is available.
+  `GET /api/availability` returns `{ online, nextOnlineAt }`; each chat turn tells
+  the bot, which hands off without offering forms when someone is online and says
+  when to expect a reply (offering the email form) when nobody is. A `/support`
+  Slack slash command (`POST /api/slack/commands`, from the configured channel)
+  overrides the hours: `on` for four hours, `off` until the next opening, and no
+  argument for the status. The Slack app needs the `commands` scope.
+- Optional `GEMINI_FILE_SEARCH_STORE` for the Gemini pilot: chat turns also
+  retrieve from a Gemini File Search store, so the knowledge base can move out of
+  `kbSources` instead of riding in every prompt. Documents uploaded with a `url`
+  custom-metadata entry are linked under the replies they ground, using the
+  stored URL rather than model output. The Workers AI fallback cannot read the
+  store.
+- Optional `CONVERSATION_RETENTION_DAYS`: a conversation is deleted that many days
+  after its last message, from Telegram (its topic), KV (its index entries), R2 (its
+  uploads) and its Durable Object storage, and the widget forgets its saved
+  transcript at the same age. Unset keeps conversations, as before.
+- Optional Slack handoffs (`SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
+  `SLACK_SIGNING_SECRET`), beside Telegram: each conversation is a thread in one
+  channel, mirrored like a Telegram topic; the handoff alert pings `@channel` and
+  carries a **Hand back to AI** button, posted again with the visitor's next message
+  if it couldn't be posted at handoff; replies in the thread reach the visitor;
+  screenshots and lead forms land in the thread. New signed routes
+  `POST /api/slack/events` and `POST /api/slack/interactions`, and an app manifest in
+  `services/edge/slack-manifest.json`. The Worker never deletes Slack messages:
+  Slack's own retention setting does.
+
+### Changed
+
+- Widget: a reply now also chimes when the chat is open but nobody is looking at
+  the page: a hidden tab, or a browser window without focus (another app in
+  front), so a visitor waiting elsewhere hears the answer arrive. A closed panel
+  behaves as before. The ding's audio is now unlocked by the visitor's first click
+  or keypress on the page, so it can play from a background tab (browsers keep
+  audio first started there silent).
+
 ## [0.4.1] — 2026-09-30
 
 ### Fixed

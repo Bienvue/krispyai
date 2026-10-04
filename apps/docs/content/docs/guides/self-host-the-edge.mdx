@@ -27,6 +27,9 @@ the Worker never reads a `.env` file at runtime. set each secret in Cloudflare w
 bunx wrangler secret put TELEGRAM_BOT_TOKEN       # BotFather token
 bunx wrangler secret put TELEGRAM_CHAT_ID         # supergroup id, e.g. -1001234567890
 bunx wrangler secret put TELEGRAM_WEBHOOK_SECRET  # any random string
+bunx wrangler secret put SLACK_BOT_TOKEN          # optional: Slack handoffs (connect Slack)
+bunx wrangler secret put SLACK_CHANNEL_ID         # optional: the Slack channel's id
+bunx wrangler secret put SLACK_SIGNING_SECRET     # optional: the Slack app's signing secret
 bunx wrangler secret put TENANT_SYNC_SECRET       # optional: gates /api/tenant/config
 bunx wrangler secret put KNOWLEDGE_GATEWAY_SECRET # optional: private retrieval gateway
 ```

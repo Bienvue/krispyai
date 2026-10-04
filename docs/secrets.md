@@ -2,7 +2,7 @@
 
 Never commit real secrets. Two kinds of config live in this repo's world:
 
-- **The edge Worker's secrets** — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TENANT_SYNC_SECRET`. These live in **Cloudflare**, not in any file.
+- **The edge Worker's secrets** — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `SLACK_SIGNING_SECRET`, `TENANT_SYNC_SECRET`. These live in **Cloudflare**, not in any file.
 - **The `krispy` CLI's config** — `KRISPY_API`, `KRISPY_TENANT`, `TENANT_SYNC_SECRET`. Documented in `.env.example`; put your fill-ins in `.env.local` (git-ignored).
 
 ## 1. Worker secrets — `wrangler secret put`
@@ -14,6 +14,9 @@ cd services/edge
 bunx wrangler secret put TELEGRAM_BOT_TOKEN
 bunx wrangler secret put TELEGRAM_CHAT_ID
 bunx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+bunx wrangler secret put SLACK_BOT_TOKEN        # optional: Slack handoffs instead of
+bunx wrangler secret put SLACK_CHANNEL_ID       # (or beside) Telegram; all three or
+bunx wrangler secret put SLACK_SIGNING_SECRET   # none (docs → connect Slack)
 bunx wrangler secret put TENANT_SYNC_SECRET     # optional: gates /api/tenant/config
                                                 # (also the server-to-server credential
                                                 # accepted on /api/operator/*)
@@ -42,8 +45,8 @@ Copy `.env.example` → `.env.local`, fill it in. Keep it clean — **strip inli
 
 - **Worker runtime secrets** (`TELEGRAM_*`, `TENANT_SYNC_SECRET`, `BILLING_SYNC_SECRET`, …) sync to Cloudflare via the [native Cloudflare connector](https://infisical.com/docs/integrations/cloud/cloudflare-pages), so you never hand-copy a secret into the platform.
 - **Optional gateway configuration** (`KNOWLEDGE_GATEWAY_URL`, `KNOWLEDGE_TENANT_ID`, `KNOWLEDGE_SITE_ID`, `KNOWLEDGE_TIMEOUT_MS`) is synced from the Infisical-fed `.env.local` by `scripts/sync-edge-secrets.mjs` through the per-key Worker secret API. Missing keys are skipped and leave any existing binding unchanged, so a deploy cannot reset self-host configuration accidentally; remove a gateway binding explicitly when disabling it.
-- **Conversation runtime settings** (`AUTO_ARCHIVE_HOURS`, `BUTTR_INBOX_URL`, `EMAIL_ASSET_ORIGIN`) use the same optional per-key sync. The archive window defaults to 24 hours when unset. Set the inbox URL to the authenticated operator inbox for the target environment so lead-email links open a tenant-checked conversation. Set the asset origin to a public HTTPS host serving `/brand/buttr-chill.png`; missing or unsafe origins leave the text-only header. Keep preview and production URLs in their own Infisical environments.
-- **Pilot AI and calls** use `GEMINI_API_KEY`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_URL`, and optional `LIVEKIT_CLIENT_URL` from the same environment feed. The sync script includes these keys when present, with the target Worker selected by `deploy.sh`; preview values must come from the preview Infisical folders.
+- **Conversation runtime settings** (`AUTO_ARCHIVE_HOURS`, `CONVERSATION_RETENTION_DAYS`, `BUTTR_INBOX_URL`, `EMAIL_ASSET_ORIGIN`) use the same optional per-key sync. The archive window defaults to 24 hours when unset; conversations are kept unless a retention is set. Set the inbox URL to the authenticated operator inbox for the target environment so lead-email links open a tenant-checked conversation. Set the asset origin to a public HTTPS host serving `/brand/buttr-chill.png`; missing or unsafe origins leave the text-only header. Keep preview and production URLs in their own Infisical environments.
+- **Pilot AI and calls** use `GEMINI_API_KEY`, the optional `GEMINI_FILE_SEARCH_STORE` (a store name, not a secret; one per environment), `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, `LIVEKIT_URL`, and optional `LIVEKIT_CLIENT_URL` from the same environment feed. The sync script includes these keys when present, with the target Worker selected by `deploy.sh`; preview values must come from the preview Infisical folders.
 - **Native call pilot** uses `PUSH_TRIGGER_SECRET` as the shared Core-to-Cloud offer and status credential. `NATIVE_CALLS_ENABLED` and `CALL_PILOT_TENANT_ID` are optional per-environment settings synced by the same script. Keep the exact pilot tenant ID during rollback so existing calls and signed LiveKit webhooks can finish cleanup. Only set `NATIVE_CALLS_ENABLED=1` after the matching Cloud API, push delivery, signed app, and preview call checks are ready. Missing keys leave existing Worker bindings unchanged; an explicit `0` disables new calls.
 - **Browser call bundle** is staged by `./deploy.sh widget preview` from the pinned public `livekit-client@2.22.3` npm release. `scripts/stage-livekit-client.mjs` checks the UMD SHA-256 and copies its Apache-2.0 license into the static widget upload. Set `LIVEKIT_CLIENT_PACKAGE_DIR` to use an already installed package of the same version. Point `LIVEKIT_CLIENT_URL` at the deployed versioned asset; each preview widget deploy stages it again so the URL remains valid.
 - **Lead email** uses `RESEND_API_KEY` and `LEAD_EMAIL_FROM` from Infisical. Set the sender to an address verified for that Resend account; the deploy syncs both to the edge Worker. A configured email connector's recipient address remains in tenant config. A form with a configured email connector now returns `delivery_failed` if Resend does not accept the send.

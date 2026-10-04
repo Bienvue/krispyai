@@ -193,6 +193,36 @@
       /* the live conversation still works when storage is blocked */
     }
   }
+  // The Worker deletes a conversation its retention period after the last message;
+  // the transcript saved here goes too, before the chat is opened (at boot, from the
+  // last config's period, and again when this page's config arrives), so it is never
+  // replayed into the AI's context or re-seeded into a handoff. Transcripts saved
+  // without timestamps (older widgets) are left alone.
+  function expireTranscript(days) {
+    var ms = Number(days) * 24 * 60 * 60 * 1000;
+    if (!(ms > 0) || opened || !savedMsgs.length) return;
+    var last = 0;
+    for (var ei = 0; ei < savedMsgs.length; ei++) {
+      var ets = savedMsgs[ei] && savedMsgs[ei].ts;
+      if (typeof ets === "number" && ets > last) last = ets;
+    }
+    if (!last || Date.now() - last < ms) return;
+    savedMsgs = [];
+    history.length = 0;
+    try {
+      localStorage.removeItem(MSG_KEY);
+    } catch {
+      /* storage blocked: nothing was saved there either */
+    }
+  }
+  // The retention period from the last widget config, so the transcript also expires
+  // when the chat opens before this page's config arrives, or the fetch fails.
+  var RETENTION_KEY = "krispy_retention_" + cfg.tenant;
+  try {
+    expireTranscript(localStorage.getItem(RETENTION_KEY));
+  } catch {
+    /* storage blocked: no transcript was saved either */
+  }
   // Rebuild the AI context from the restored transcript (me→user, bot/op→assistant).
   for (var hi = Math.max(0, savedMsgs.length - 10); hi < savedMsgs.length; hi++) {
     var hm = savedMsgs[hi];
@@ -1184,6 +1214,14 @@
       return r.json();
     })
     .then(function (c) {
+      var days = c && c.retentionDays;
+      try {
+        if (days) localStorage.setItem(RETENTION_KEY, String(days));
+        else localStorage.removeItem(RETENTION_KEY);
+      } catch {
+        /* storage blocked: the boot check has nothing to read */
+      }
+      expireTranscript(days);
       applyTheme(c && c.theme);
       applyBoot(c);
     })
@@ -1400,10 +1438,15 @@
     }
   }
 
-  // Inbound message landed → notify only if the panel is closed.
+  // Inbound message landed → notify only if the panel is closed. An open panel on a
+  // page nobody is looking at still chimes: a hidden tab, or a tab in front of a
+  // window behind another app (still "visible", but without focus).
   var autoOpenTimer = null;
   function notifyInbound() {
-    if (panel.classList.contains("open")) return;
+    if (panel.classList.contains("open")) {
+      if (document.visibilityState === "hidden" || !document.hasFocus()) playDing();
+      return;
+    }
     playDing();
     launcher.classList.add("kunread");
     rememberUnread();
@@ -1421,9 +1464,21 @@
       }, timing.autoOpenMs);
   }
 
-  // First interaction unlocks audio (browser autoplay policy).
+  // First interaction unlocks audio (browser autoplay policy). The ding's context is
+  // made and resumed here, inside the gesture: one first created later, from a hidden
+  // page with no gesture (a reply landing while the visitor is in another tab), stays
+  // suspended and silent.
   function markInteracted() {
     hasInteracted = true;
+    if (audioCtx || !soundEnabled || muted) return;
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return;
+      audioCtx = new AC();
+      Promise.resolve(audioCtx.resume()).catch(function () {});
+    } catch {
+      /* audio optional */
+    }
   }
   host.addEventListener("pointerdown", markInteracted);
   // ...and anywhere else on the page. Audio is gated on user interaction, and
@@ -1433,6 +1488,8 @@
   // a custom launcher outside this host. `once` + capture: one listener, removed
   // as soon as it has done its job.
   document.addEventListener("pointerdown", markInteracted, { once: true, capture: true });
+  // Typing is a gesture too: a visitor can open the chat and type without clicking.
+  document.addEventListener("keydown", markInteracted, { once: true, capture: true });
 
   // Minimal, SAFE markdown → DOM. Appends nodes to `el` via createElement/
   // textContent ONLY — NEVER innerHTML (the load-bearing XSS guard). Handles

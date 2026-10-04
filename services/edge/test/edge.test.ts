@@ -10,8 +10,16 @@ import {
   BREVITY_INSTRUCTION,
 } from "../src/system-prompt";
 import { renderLeadEmail, sendLeadEmail } from "../src/email";
-import { deliverLead, historySeed, ringToHistory, RING_HISTORY_MAX } from "../src/index";
+import {
+  deliverLead,
+  ensureSlackThread,
+  historySeed,
+  inSlackThread,
+  ringToHistory,
+  RING_HISTORY_MAX,
+} from "../src/index";
 import { parseOwnerReply, sendToTopic, buildMentions, sendHandoffAlert } from "../src/telegram";
+import { slackPost } from "../src/slack";
 import {
   broadcast,
   SessionDO,
@@ -71,6 +79,10 @@ import {
   LEAD_RATE_MAX,
   DO_INTERNAL_HEADER,
   doInternalSecret,
+  slackConfig,
+  linkSlackThread,
+  getSlackThreadForSession,
+  getSessionForSlackThread,
   type EntitlementSnapshot,
 } from "../src/store";
 import type { Env } from "../src/types";
@@ -82,6 +94,7 @@ function fakeEnv(extra: Partial<Env> = {}): Env {
     KRISPY_KV: {
       get: async (k: string) => kv.get(k) ?? null,
       put: async (k: string, v: string) => void kv.set(k, v),
+      delete: async (k: string) => void kv.delete(k),
       list: async ({ prefix }: { prefix?: string } = {}) => ({
         keys: [...kv.keys()]
           .filter((k) => !prefix || k.startsWith(prefix))
@@ -396,6 +409,33 @@ describe("store", () => {
       "self",
     );
     expect(ok?.botToken).toBe("t");
+  });
+
+  const SLACK = { SLACK_BOT_TOKEN: "xoxb-1", SLACK_CHANNEL_ID: "C1", SLACK_SIGNING_SECRET: "sig" };
+
+  test("slackConfig: self only, and only with all three secrets", () => {
+    expect(slackConfig(fakeEnv(SLACK), "self")).toEqual({
+      botToken: "xoxb-1",
+      channelId: "C1",
+      signingSecret: "sig",
+    });
+    expect(slackConfig(fakeEnv(SLACK), "acme")).toBeNull();
+    expect(slackConfig(fakeEnv({ ...SLACK, SLACK_SIGNING_SECRET: undefined }), "self")).toBeNull();
+  });
+
+  test("getTenant('self') with Slack alone is a config without Telegram creds", async () => {
+    const env = fakeEnv(SLACK);
+    await mergeTenantConfig(env, "self", { systemPrompt: "kv prompt", botToken: "kv-tok" });
+    const t = await getTenant(env, "self");
+    expect(t?.systemPrompt).toBe("kv prompt");
+    expect(t?.botToken).toBeUndefined(); // env creds still win: no Telegram env, no Telegram
+  });
+
+  test("Slack thread ↔ session map round-trips", async () => {
+    const env = fakeEnv();
+    await linkSlackThread(env, "self", "1700000000.000100", "s1");
+    expect(await getSlackThreadForSession(env, "self", "s1")).toBe("1700000000.000100");
+    expect(await getSessionForSlackThread(env, "self", "1700000000.000100")).toBe("s1");
   });
   test("getTenant('self') merges KV forms/connectors/theme over env creds (P1)", async () => {
     const env = fakeEnv({ TELEGRAM_BOT_TOKEN: "envtok", TELEGRAM_CHAT_ID: "-100" });
@@ -2356,6 +2396,510 @@ describe("SessionDO hand-back", () => {
     expect(resumes(frames)).toHaveLength(0);
     const { messages } = (await (await get(do_, "/log")).json()) as { messages: RingMsg[] };
     expect(messages).toHaveLength(0); // no note appended
+  });
+});
+
+// ── Slack thread lifecycle ────────────────────────────────────────────────────
+describe("Slack threads", () => {
+  const slack = { botToken: "xoxb-1", channelId: "C1", signingSecret: "sig" };
+  const realFetch = globalThis.fetch;
+  function slackFetch(reply: (body: any) => unknown) {
+    const posts: any[] = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      posts.push(body);
+      return Response.json(reply(body));
+    }) as typeof fetch;
+    return posts;
+  }
+
+  test("starts a thread once and links it", async () => {
+    const env = fakeEnv();
+    const posts = slackFetch(() => ({ ok: true, ts: "10.1" }));
+    try {
+      expect(await ensureSlackThread(env, slack, "self", "s1", "Hi · s1")).toBe("10.1");
+      expect(await ensureSlackThread(env, slack, "self", "s1", "Hi · s1")).toBe("10.1");
+      expect(posts).toHaveLength(1);
+      expect(await getSlackThreadForSession(env, "self", "s1")).toBe("10.1");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("a deleted thread root: start a fresh thread, relink, drop the stale key, retry", async () => {
+    const env = fakeEnv();
+    await linkSlackThread(env, "self", "1.0", "s1");
+    const posts = slackFetch((body) =>
+      body.thread_ts === "1.0"
+        ? { ok: false, error: "thread_not_found" }
+        : { ok: true, ts: "20.2" },
+    );
+    try {
+      const used = await inSlackThread(env, slack, "self", "s1", (ts) =>
+        slackPost(slack.botToken, slack.channelId, ts, "👤 still there?"),
+      );
+      expect(used).toBe("20.2");
+      expect(await getSlackThreadForSession(env, "self", "s1")).toBe("20.2");
+      expect(await getSessionForSlackThread(env, "self", "1.0")).toBeNull();
+      expect(posts.at(-1)).toMatchObject({ thread_ts: "20.2", text: "👤 still there?" });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("other Slack errors are not retried", async () => {
+    const env = fakeEnv();
+    await linkSlackThread(env, "self", "1.0", "s1");
+    const posts = slackFetch(() => ({ ok: false, error: "ratelimited" }));
+    try {
+      const err = await rejection(
+        inSlackThread(env, slack, "self", "s1", (ts) =>
+          slackPost(slack.botToken, slack.channelId, ts, "x"),
+        ),
+      );
+      expect(err.message).toContain("ratelimited");
+      expect(posts).toHaveLength(1);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("no thread yet → null, nothing posted", async () => {
+    const posts = slackFetch(() => ({ ok: true }));
+    try {
+      expect(await inSlackThread(fakeEnv(), slack, "self", "s1", async () => {})).toBeNull();
+      expect(posts).toHaveLength(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+// ── Slack mirror + handoff alert through /api/chat ───────────────────────────
+describe("Slack chat mirror", () => {
+  const SLACK_ENV = {
+    SLACK_BOT_TOKEN: "xoxb-1",
+    SLACK_CHANNEL_ID: "C1",
+    SLACK_SIGNING_SECRET: "sig",
+  };
+  const realFetch = globalThis.fetch;
+  function captureSlack(reply: (body: any) => unknown = () => ({ ok: true, ts: "10.1" })) {
+    const posts: any[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).startsWith("https://slack.com/api/"))
+        return realFetch(input as RequestInfo, init);
+      const body = JSON.parse(String(init?.body));
+      posts.push(body);
+      return Response.json(reply(body));
+    }) as typeof fetch;
+    return posts;
+  }
+  const chat = (env: Env, sessionId: string, message: string) =>
+    worker.fetch(
+      new Request("https://edge.test/api/chat", {
+        method: "POST",
+        body: JSON.stringify({ sessionId, tenantId: "self", message }),
+      }),
+      env,
+    );
+
+  test("Slack alone: a thread per conversation, visitor and AI mirrored, escaped", async () => {
+    const env = wireSessionNS(
+      fakeEnv({ ...SLACK_ENV, AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai }),
+    );
+    const posts = captureSlack();
+    try {
+      const res = await chat(env, "sess-slack-1", "hi <!channel>");
+      expect(((await res.json()) as { reply: string }).reply).toBe("Hello.");
+      expect(posts[0]).toEqual({ channel: "C1", text: "hi &lt;!channel&gt; · sess-s" });
+      expect(posts.slice(1).map((p) => [p.thread_ts, p.text])).toEqual([
+        ["10.1", "👤 hi &lt;!channel&gt;"],
+        ["10.1", "🤖 Hello."],
+      ]);
+      await chat(env, "sess-slack-1", "again");
+      expect(posts.filter((p) => !p.thread_ts)).toHaveLength(1); // still one thread
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("a handoff posts the loud alert with the hand-back button, once", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        ...SLACK_ENV,
+        AI: { run: async () => ({ response: "Let me get someone. [!HANDOFF]" }) } as unknown as Ai,
+      }),
+    );
+    const posts = captureSlack();
+    try {
+      await chat(env, "sess-slack-2", "I need a person");
+      await chat(env, "sess-slack-2", "hello?");
+      const alerts = posts.filter((p) => p.reply_broadcast);
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0].thread_ts).toBe("10.1");
+      expect(alerts[0].blocks[1].elements[0].action_id).toBe("handback");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("an alert that failed to post comes with the next message, once", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        ...SLACK_ENV,
+        AI: { run: async () => ({ response: "Let me get someone. [!HANDOFF]" }) } as unknown as Ai,
+      }),
+    );
+    let alertsDown = true; // e.g. the bot wasn't in the channel yet
+    const posts = captureSlack((body) =>
+      body.reply_broadcast && alertsDown
+        ? { ok: false, error: "not_in_channel" }
+        : { ok: true, ts: "10.1" },
+    );
+    try {
+      await chat(env, "sess-slack-4", "I need a person");
+      expect(posts.filter((p) => p.reply_broadcast)).toHaveLength(1); // tried, failed
+      alertsDown = false;
+      await chat(env, "sess-slack-4", "hello?");
+      await chat(env, "sess-slack-4", "anyone?");
+      const alerts = posts.filter((p) => p.reply_broadcast);
+      expect(alerts).toHaveLength(2); // the failed one, then one that landed
+      expect(alerts[1].thread_ts).toBe("10.1");
+      expect(alerts[1].blocks[1].elements[0].action_id).toBe("handback");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("a conversation the AI is answering gets no alert", async () => {
+    const env = wireSessionNS(
+      fakeEnv({ ...SLACK_ENV, AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai }),
+    );
+    const posts = captureSlack();
+    try {
+      await chat(env, "sess-slack-5", "hi");
+      await chat(env, "sess-slack-5", "thanks");
+      expect(posts.filter((p) => p.reply_broadcast)).toHaveLength(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("Slack being down never blocks the visitor's reply", async () => {
+    const env = wireSessionNS(
+      fakeEnv({ ...SLACK_ENV, AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai }),
+    );
+    captureSlack(() => ({ ok: false, error: "service_unavailable" }));
+    try {
+      const res = await chat(env, "sess-slack-3", "hi");
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { reply: string }).reply).toBe("Hello.");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+// ── Slack routes ──────────────────────────────────────────────────────────────
+describe("Slack routes", () => {
+  const SLACK_ENV = {
+    SLACK_BOT_TOKEN: "xoxb-1",
+    SLACK_CHANNEL_ID: "C1",
+    SLACK_SIGNING_SECRET: "sig",
+  };
+  const realFetch = globalThis.fetch;
+
+  async function signed(
+    path: string,
+    body: string,
+    headers: Record<string, string> = {},
+    secret = "sig",
+  ) {
+    const ts = String(Math.floor(Date.now() / 1000));
+    const key = await crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const mac = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`v0:${ts}:${body}`)),
+    );
+    const sig = "v0=" + [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return new Request(`https://edge.test${path}`, {
+      method: "POST",
+      headers: { "x-slack-request-timestamp": ts, "x-slack-signature": sig, ...headers },
+      body,
+    });
+  }
+  const event = (text: string, thread_ts = "10.1", event_id = `Ev-${text}`) =>
+    JSON.stringify({
+      type: "event_callback",
+      event_id,
+      event: { type: "message", channel: "C1", user: "U9", text, ts: "11.0", thread_ts },
+    });
+  async function threadTexts(env: Env, sessionId: string) {
+    const r = await worker.fetch(
+      new Request("https://edge.test/api/operator/thread", {
+        method: "POST",
+        headers: { "x-tenant-sync-secret": OP_SECRET },
+        body: JSON.stringify({ tenantId: "self", sessionId }),
+      }),
+      env,
+    );
+    return ((await r.json()) as { messages: RingMsg[] }).messages.map((m) => m.text);
+  }
+  const slackEnv = () => wireSessionNS(fakeEnv({ ...SLACK_ENV, TENANT_SYNC_SECRET: OP_SECRET }));
+
+  test("off without Slack config: 404", async () => {
+    const res = await worker.fetch(await signed("/api/slack/events", "{}"), fakeEnv());
+    expect(res.status).toBe(404);
+  });
+
+  test("a bad signature is 403 and reaches nothing", async () => {
+    const env = slackEnv();
+    await linkSlackThread(env, "self", "10.1", "s-sl");
+    const res = await worker.fetch(
+      await signed("/api/slack/events", event("hi"), {}, "wrong"),
+      env,
+    );
+    expect(res.status).toBe(403);
+    expect(await threadTexts(env, "s-sl")).toEqual([]);
+  });
+
+  test("url_verification echoes the challenge", async () => {
+    const res = await worker.fetch(
+      await signed(
+        "/api/slack/events",
+        JSON.stringify({ type: "url_verification", challenge: "c-1" }),
+      ),
+      slackEnv(),
+    );
+    expect(await res.json()).toEqual({ challenge: "c-1" });
+  });
+
+  test("an operator's thread reply reaches the visitor as plain text", async () => {
+    const env = slackEnv();
+    await linkSlackThread(env, "self", "10.1", "s-sl");
+    const res = await worker.fetch(
+      await signed(
+        "/api/slack/events",
+        event("Tom &amp; Jerry: <https://h.example/a|this article>"),
+      ),
+      env,
+    );
+    expect(res.status).toBe(200);
+    expect(await threadTexts(env, "s-sl")).toEqual([
+      "Tom & Jerry: this article (https://h.example/a)",
+    ]);
+  });
+
+  test("a redelivered event is acknowledged but not delivered twice", async () => {
+    const env = slackEnv();
+    await linkSlackThread(env, "self", "10.1", "s-sl");
+    await worker.fetch(await signed("/api/slack/events", event("once")), env);
+    const retry = await worker.fetch(
+      await signed("/api/slack/events", event("once"), { "x-slack-retry-num": "1" }),
+      env,
+    );
+    expect(retry.status).toBe(200);
+    expect(await threadTexts(env, "s-sl")).toEqual(["once"]);
+  });
+
+  test("two replies with the same text are two events, both delivered", async () => {
+    const env = slackEnv();
+    await linkSlackThread(env, "self", "10.1", "s-sl");
+    await worker.fetch(await signed("/api/slack/events", event("ok", "10.1", "Ev-1")), env);
+    await worker.fetch(await signed("/api/slack/events", event("ok", "10.1", "Ev-2")), env);
+    expect(await threadTexts(env, "s-sl")).toEqual(["ok", "ok"]);
+  });
+
+  test("a delivery that fails is a 500, and Slack's retry delivers it", async () => {
+    const env = slackEnv();
+    await linkSlackThread(env, "self", "10.1", "s-sl");
+    // The session's Durable Object fails the first operator push (a transient hiccup).
+    const ns = (env as unknown as { SESSION: { get: (name: string) => { fetch: typeof fetch } } })
+      .SESSION;
+    const realGet = ns.get;
+    let failNext = true;
+    ns.get = (name: string) => {
+      const stub = realGet(name);
+      return {
+        fetch: ((input: RequestInfo | URL, init?: RequestInit) => {
+          if (failNext && String(input).endsWith("/operator")) {
+            failNext = false;
+            return Promise.resolve(new Response("unavailable", { status: 503 }));
+          }
+          return stub.fetch(input, init);
+        }) as typeof fetch,
+      };
+    };
+    const first = await worker.fetch(await signed("/api/slack/events", event("retry me")), env);
+    expect(first.status).toBe(500);
+    const retry = await worker.fetch(
+      await signed("/api/slack/events", event("retry me"), { "x-slack-retry-num": "1" }),
+      env,
+    );
+    expect(retry.status).toBe(200);
+    expect(await threadTexts(env, "s-sl")).toEqual(["retry me"]);
+  });
+
+  test("a reply in an unknown thread is ignored", async () => {
+    const env = slackEnv();
+    const res = await worker.fetch(await signed("/api/slack/events", event("hi", "99.9")), env);
+    expect(res.status).toBe(200);
+  });
+
+  test("Hand back to AI resolves the session and acks in the thread", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        ...SLACK_ENV,
+        TENANT_SYNC_SECRET: OP_SECRET,
+        AI: { run: async () => ({ response: "Welcome back." }) } as unknown as Ai,
+      }),
+    );
+    await linkSlackThread(env, "self", "10.1", "s-sl");
+    await worker.fetch(await signed("/api/slack/events", event("a human is here")), env);
+    const posts: any[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).startsWith("https://slack.com/api/"))
+        return realFetch(input as RequestInfo, init);
+      posts.push(JSON.parse(String(init?.body)));
+      return Response.json({ ok: true, ts: "10.1" });
+    }) as typeof fetch;
+    try {
+      const payload = JSON.stringify({
+        type: "block_actions",
+        channel: { id: "C1" },
+        actions: [{ action_id: "handback", value: "10.1" }],
+      });
+      const res = await worker.fetch(
+        await signed("/api/slack/interactions", new URLSearchParams({ payload }).toString(), {
+          "content-type": "application/x-www-form-urlencoded",
+        }),
+        env,
+      );
+      expect(res.status).toBe(200);
+      expect(posts.some((p) => p.thread_ts === "10.1" && /Resolved/.test(p.text))).toBe(true);
+      const chat = await worker.fetch(
+        new Request("https://edge.test/api/chat", {
+          method: "POST",
+          body: JSON.stringify({ sessionId: "s-sl", tenantId: "self", message: "back again" }),
+        }),
+        env,
+      );
+      expect(((await chat.json()) as { handedOff: boolean }).handedOff).toBe(false);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});
+
+// ── Slack: screenshots, leads, widget capability ─────────────────────────────
+describe("Slack delivery", () => {
+  const SLACK_ENV = {
+    SLACK_BOT_TOKEN: "xoxb-1",
+    SLACK_CHANNEL_ID: "C1",
+    SLACK_SIGNING_SECRET: "sig",
+  };
+  const realFetch = globalThis.fetch;
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0, 0, 0, 0, 0]);
+  function captureUrls() {
+    const urls: string[] = [];
+    const bodies: string[] = [];
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      urls.push(url);
+      bodies.push(typeof init?.body === "string" ? init.body : "");
+      if (url.endsWith("files.getUploadURLExternal"))
+        return Response.json({
+          ok: true,
+          upload_url: "https://files.slack.com/u/1",
+          file_id: "F1",
+        });
+      if (url.startsWith("https://files.slack.com")) return new Response("OK");
+      return Response.json({ ok: true, ts: "10.1" });
+    }) as typeof fetch;
+    return { urls, bodies };
+  }
+  const attach = (env: Env, sessionId: string) => {
+    const fd = new FormData();
+    fd.set("sessionId", sessionId);
+    fd.set("tenantId", "self");
+    fd.set("file", new File([PNG], "x.png", { type: "image/png" }));
+    return worker.fetch(
+      new Request("https://edge.test/api/attachment", { method: "POST", body: fd }),
+      env,
+    );
+  };
+
+  test("a screenshot goes into the session's Slack thread", async () => {
+    const env = fakeEnv(SLACK_ENV);
+    await linkSlackThread(env, "self", "10.1", "s-shot");
+    const { urls, bodies } = captureUrls();
+    try {
+      const res = await attach(env, "s-shot");
+      expect(res.status).toBe(200);
+      expect(urls).toContain("https://slack.com/api/files.completeUploadExternal");
+      expect(bodies.some((b) => b.includes("thread_ts=10.1"))).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("no Slack thread yet → 409, nothing uploaded", async () => {
+    const { urls } = captureUrls();
+    try {
+      expect((await attach(fakeEnv(SLACK_ENV), "s-none")).status).toBe(409);
+      expect(urls).toHaveLength(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("an upload Slack rejects is a 502", async () => {
+    const env = fakeEnv(SLACK_ENV);
+    await linkSlackThread(env, "self", "10.1", "s-bad");
+    globalThis.fetch = (async () =>
+      Response.json({ ok: false, error: "not_in_channel" })) as unknown as typeof fetch;
+    try {
+      expect((await attach(env, "s-bad")).status).toBe(502);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("a captured lead is posted into the thread, escaped", async () => {
+    const env = fakeEnv(SLACK_ENV);
+    await linkSlackThread(env, "self", "10.1", "s-lead");
+    const { urls, bodies } = captureUrls();
+    try {
+      await deliverLead(env, {
+        tenantId: "self",
+        sessionId: "s-lead",
+        formId: null,
+        values: { email: "a@b.co", note: "<!here>" },
+        history: [],
+      });
+      const i = urls.indexOf("https://slack.com/api/chat.postMessage");
+      expect(i).toBeGreaterThanOrEqual(0);
+      const body = JSON.parse(bodies[i]!);
+      expect(body.thread_ts).toBe("10.1");
+      expect(body.text).toContain("• email: a@b.co");
+      expect(body.text).toContain("&lt;!here&gt;");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("the widget offers attachments with Slack alone", async () => {
+    const res = await worker.fetch(
+      new Request("https://edge.test/api/widget/config?t=self"),
+      fakeEnv(SLACK_ENV),
+    );
+    const config = (await res.json()) as { capabilities: { attachments: boolean } };
+    expect(config.capabilities.attachments).toBe(true);
   });
 });
 

@@ -34,6 +34,8 @@ docs {
   secret-guarded `GET /api/tenant/config`, which returns the full config incl. the bot token.
   The theme includes launcherStyle (circle/pill) and launcherLabel when configured.
   `capabilities.attachments` is true only when screenshot paste/drop has a Telegram delivery channel.
+  `retentionDays` is present when `CONVERSATION_RETENTION_DAYS` is set; the widget forgets a
+  saved transcript older than that, since the conversation has been deleted.
   The widget trims pill labels to 24 characters; unset fields keep the circular default.
   See `openapi.yaml` and `reference/edge-routes.mdx`.
 }

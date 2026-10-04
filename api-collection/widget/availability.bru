@@ -1,0 +1,28 @@
+meta {
+  name: Availability - is a teammate available
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{baseUrl}}/api/availability?t=self
+  auth: none
+}
+
+tests {
+  test("responds 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  test("returns the status and a time only", function() {
+    const b = res.getBody();
+    expect(Object.keys(b).sort()).to.eql(["nextOnlineAt", "online"]);
+  });
+}
+
+docs {
+  PUBLIC (CORS, no secret): whether a teammate is available now, from the tenant's
+  `availability` hours and the `/support on|off` toggle in Slack. Returns
+  `{ online: boolean | null, nextOnlineAt: string | null }`; `online` is null when the tenant
+  has no `availability` config, and `nextOnlineAt` (ISO 8601) is set only when offline.
+  Cached for 60 seconds. See `openapi.yaml` and `reference/edge-routes.mdx`.
+}

@@ -123,3 +123,49 @@ describe("widget visual contract", () => {
     expect(source).toContain("if (counts[key]) counts[key] -= 1");
   });
 });
+
+describe("conversation retention", () => {
+  // The exact expireTranscript from widget.js, run against a saved transcript.
+  function expire(saved: { c: string; t?: string; ts?: number }[], days: unknown, opened = false) {
+    const start = source.indexOf("  function expireTranscript(days) {");
+    const end = source.indexOf("  // The retention period from the last widget config", start);
+    if (start < 0 || end < 0) throw new Error("expireTranscript not found");
+    const store = new Map([["krispy_msgs_self", JSON.stringify(saved)]]);
+    const localStorage = { removeItem: (k: string) => void store.delete(k) };
+    // oxlint-disable-next-line typescript/no-implied-eval, typescript/no-unsafe-type-assertion
+    const run = new Function(
+      "savedMsgs",
+      "history",
+      "opened",
+      "localStorage",
+      `var MSG_KEY = "krispy_msgs_self";${source.slice(start, end)}; expireTranscript(${JSON.stringify(days)}); return { savedMsgs, history };`,
+    ) as (...args: unknown[]) => { savedMsgs: unknown[]; history: unknown[] };
+    const history = [{ role: "user", content: "hi" }];
+    const result = run(saved, history, opened, localStorage);
+    return { ...result, stored: store.has("krispy_msgs_self") };
+  }
+  const DAY = 24 * 60 * 60 * 1000;
+
+  test("a transcript older than the retention period is forgotten before the chat opens", () => {
+    const old = [{ c: "me", t: "charged twice", ts: Date.now() - 31 * DAY }];
+    expect(expire(old, 30)).toEqual({ savedMsgs: [], history: [], stored: false });
+  });
+
+  test("a recent transcript, no retention, an open chat or untimed messages are kept", () => {
+    const recent = [{ c: "me", t: "hello", ts: Date.now() - DAY }];
+    const old = [{ c: "me", t: "hello", ts: Date.now() - 31 * DAY }];
+    expect(expire(recent, 30).stored).toBe(true);
+    expect(expire(old, undefined).stored).toBe(true);
+    expect(expire(old, 0).stored).toBe(true);
+    expect(expire(old, 30, true).stored).toBe(true);
+    expect(expire([{ c: "me", t: "hello" }], 30).stored).toBe(true);
+  });
+
+  test("boot expires the transcript from the last config's period, before the AI context is rebuilt", () => {
+    const boot = source.indexOf("  var RETENTION_KEY");
+    expect(boot).toBeGreaterThan(source.indexOf("  function expireTranscript(days) {"));
+    expect(boot).toBeLessThan(source.indexOf("  // Rebuild the AI context"));
+    expect(source).toContain("expireTranscript(localStorage.getItem(RETENTION_KEY));");
+    expect(source).toContain("localStorage.setItem(RETENTION_KEY, String(days));");
+  });
+});

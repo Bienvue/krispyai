@@ -8,6 +8,7 @@ declare global {
   interface KVNamespace {
     get(key: string): Promise<string | null>;
     put(key: string, value: string, opts?: { expirationTtl?: number }): Promise<void>;
+    delete(key: string): Promise<void>;
     list(opts?: {
       prefix?: string;
       cursor?: string;
@@ -52,6 +53,7 @@ declare global {
   interface DurableObjectStorage {
     get<T = unknown>(key: string): Promise<T | undefined>;
     put(key: string, value: unknown): Promise<void>;
+    deleteAll(): Promise<void>;
     transaction<T>(run: (tx: DurableObjectStorage) => Promise<T>): Promise<T>;
     list<T = unknown>(options?: {
       prefix?: string;
