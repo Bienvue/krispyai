@@ -31,6 +31,12 @@ works with no public username). Operators are **auto-learned**: whoever replies 
 a managed topic is upserted (capped at 10). No operators yet → the alert still
 fires, just without a mention. See `docs → connect Telegram`.
 
+**Slack** is the other optional operator channel: each conversation is a thread in one
+channel, the handoff alert pings `@channel` and carries a **Hand back to AI** button,
+and replies in the thread reach the visitor. Set `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`
+and `SLACK_SIGNING_SECRET`, and create the app from
+[`slack-manifest.json`](./slack-manifest.json). See `docs → connect Slack`.
+
 ## Endpoints
 
 ### Gated native and guest call coordinator
@@ -141,7 +147,9 @@ only), those are not reached, so delete their topics by hand once. The widget co
 before the chat is opened (at boot, from the last config it saw), so a deleted conversation is not sent back. Unset,
 sessions are kept as before. Not reached: kbase suggestions already extracted from a
 handback, lead emails already sent, push notifications already delivered, and
-whatever Telegram keeps after a topic is deleted.
+whatever Telegram keeps after a topic is deleted. Slack's copies are not deleted by
+the Worker (a bot can't delete operators' messages): set the workspace's, or on a paid
+plan the channel's, message retention to the same period.
 Reply suggestions remain editable and unsent. Checkout links in a suggestion must
 match the tenant's configured sources or validated knowledge gateway context;
 ordinary sentence punctuation after an approved URL does not hide the suggestion.
@@ -161,6 +169,8 @@ from Gemini for this action only; normal visitor chat keeps its existing output 
 | POST     | `/api/operator/media`            | bearer or tenant-sync authenticated image/video upload to an existing thread                             |
 | GET/HEAD | `/api/media/:id?t=…&s=…`         | private conversation-scoped bytes/metadata; GET supports a single video byte range                       |
 | POST     | `/api/telegram/webhook`          | owner reply → push to visitor via DO                                                                     |
+| POST     | `/api/slack/events`              | operator's Slack thread reply → push to visitor via DO                                                   |
+| POST     | `/api/slack/interactions`        | "Hand back to AI" button → resolve, AI takes over                                                        |
 | POST     | `/api/billing/entitlement`       | billing → gate: mirror an entitlement snapshot into KV _(secret-guarded)_                                |
 | GET      | `/api/tenant/config?t=<tenant>`  | read a tenant's config `{botToken, chatId, systemPrompt?, model?}`, 404 if none _(secret-guarded)_       |
 | POST     | `/api/tenant/config`             | `{tenantId, config}` merge into the tenant's KV config — the `krispy` CLI writes here _(secret-guarded)_ |

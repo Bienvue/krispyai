@@ -5,7 +5,9 @@ import {
   doInternalSecret,
   kConversationSession,
   kHandoffSession,
+  kSessionToSlackThread,
   kSessionToThread,
+  kSlackThreadToSession,
   kThreadToSession,
 } from "../src/store";
 import type { Env } from "../src/types";
@@ -127,6 +129,16 @@ describe("conversation retention", () => {
     expect(s.kv.size).toBe(0);
     expect(s.store.size).toBe(0);
     expect(s.alarm()).toBeNull();
+  });
+
+  test("the Slack thread mapping goes with the conversation; Slack itself isn't called", async () => {
+    const s = setup({ CONVERSATION_RETENTION_DAYS: "90" });
+    await conversation(s, Date.now() - 91 * DAY);
+    s.kv.set(kSessionToSlackThread("self", "s1"), "1700000000.000100");
+    s.kv.set(kSlackThreadToSession("self", "1700000000.000100"), "s1");
+    await s.session.alarm();
+    expect(s.kv.size).toBe(0);
+    expect(s.telegram.every((c) => c.method === "deleteForumTopic")).toBe(true);
   });
 
   test("a Telegram failure doesn't keep the rest", async () => {

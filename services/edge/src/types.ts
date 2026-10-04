@@ -211,6 +211,12 @@ export interface Env {
   TELEGRAM_CHAT_ID?: string;
   /** Shared secret echoed by Telegram in X-Telegram-Bot-Api-Secret-Token. */
   TELEGRAM_WEBHOOK_SECRET?: string;
+  /** Slack handoffs (optional, the "self" tenant): the app's bot token (`xoxb-…`). */
+  SLACK_BOT_TOKEN?: string;
+  /** The channel handoff threads are posted to; the bot must be a member. */
+  SLACK_CHANNEL_ID?: string;
+  /** Verifies requests from Slack (Basic Information → Signing Secret). */
+  SLACK_SIGNING_SECRET?: string;
   SYSTEM_PROMPT?: string;
   AI_MODEL?: string;
   /** Server-only Gemini API key for the exact KNOWLEDGE_TENANT_ID/SITE_ID pilot. */
@@ -236,7 +242,8 @@ export interface Env {
   AUTO_ARCHIVE_HOURS?: string;
   /** Optional conversation retention: days after a session's last message when it is
    * deleted everywhere it is held (its Durable Object storage, its KV index entries, its
-   * uploaded media in R2 and its Telegram topic). Unset or 0 keeps sessions, as before. */
+   * uploaded media in R2 and its Telegram topic). Slack's copies go by the workspace's own
+   * retention setting instead. Unset or 0 keeps sessions, as before. */
   CONVERSATION_RETENTION_DAYS?: string;
 
   // --- misc ---

@@ -2,7 +2,7 @@
 
 Never commit real secrets. Two kinds of config live in this repo's world:
 
-- **The edge Worker's secrets** — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `TENANT_SYNC_SECRET`. These live in **Cloudflare**, not in any file.
+- **The edge Worker's secrets** — `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `TELEGRAM_WEBHOOK_SECRET`, `SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`, `SLACK_SIGNING_SECRET`, `TENANT_SYNC_SECRET`. These live in **Cloudflare**, not in any file.
 - **The `krispy` CLI's config** — `KRISPY_API`, `KRISPY_TENANT`, `TENANT_SYNC_SECRET`. Documented in `.env.example`; put your fill-ins in `.env.local` (git-ignored).
 
 ## 1. Worker secrets — `wrangler secret put`
@@ -14,6 +14,9 @@ cd services/edge
 bunx wrangler secret put TELEGRAM_BOT_TOKEN
 bunx wrangler secret put TELEGRAM_CHAT_ID
 bunx wrangler secret put TELEGRAM_WEBHOOK_SECRET
+bunx wrangler secret put SLACK_BOT_TOKEN        # optional: Slack handoffs instead of
+bunx wrangler secret put SLACK_CHANNEL_ID       # (or beside) Telegram; all three or
+bunx wrangler secret put SLACK_SIGNING_SECRET   # none (docs → connect Slack)
 bunx wrangler secret put TENANT_SYNC_SECRET     # optional: gates /api/tenant/config
                                                 # (also the server-to-server credential
                                                 # accepted on /api/operator/*)

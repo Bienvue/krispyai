@@ -22,6 +22,14 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
   after its last message, from Telegram (its topic), KV (its index entries), R2 (its
   uploads) and its Durable Object storage, and the widget forgets its saved
   transcript at the same age. Unset keeps conversations, as before.
+- Optional Slack handoffs (`SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
+  `SLACK_SIGNING_SECRET`), beside Telegram: each conversation is a thread in one
+  channel, mirrored like a Telegram topic; the handoff alert pings `@channel` and
+  carries a **Hand back to AI** button; replies in the thread reach the visitor;
+  screenshots and lead forms land in the thread. New signed routes
+  `POST /api/slack/events` and `POST /api/slack/interactions`, and an app manifest in
+  `services/edge/slack-manifest.json`. The Worker never deletes Slack messages:
+  Slack's own retention setting does.
 
 ## [0.4.1] — 2026-09-30
 

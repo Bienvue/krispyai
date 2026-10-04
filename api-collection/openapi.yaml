@@ -1266,6 +1266,65 @@ paths:
         "403":
           description: Missing/wrong `x-telegram-bot-api-secret-token`.
 
+  /api/slack/events:
+    post:
+      tags: [secret-guarded]
+      summary: Operator's Slack thread reply → push to the visitor via the DO
+      operationId: slackEvents
+      description: >
+        Slack's Events API. The Worker verifies Slack's v0 signature (HMAC-SHA256 of
+        `v0:<timestamp>:<body>` with SLACK_SIGNING_SECRET, timestamp within 5 minutes),
+        answers `url_verification` with its challenge, and for a person's reply in a
+        handoff thread of SLACK_CHANNEL_ID resolves the session and pushes the reply (as
+        plain text) to the visitor. Each `event_id` is delivered once: a redelivery of
+        one already delivered (or still being delivered) is ack'd and ignored, and a
+        delivery that fails answers 500 so Slack retries it. 404 when Slack isn't
+        configured.
+      security:
+        - slackSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200":
+          description: "`ok`, or `{ challenge }` for url_verification."
+        "403":
+          description: Missing, wrong or stale Slack signature.
+        "404":
+          description: Slack is not configured.
+        "500":
+          description: The reply couldn't be delivered to the session; Slack retries it.
+
+  /api/slack/interactions:
+    post:
+      tags: [secret-guarded]
+      summary: '"Hand back to AI" button → resolve the session'
+      operationId: slackInteractions
+      description: >
+        Slack's interactivity endpoint, signed like /api/slack/events. A `block_actions`
+        payload for the `handback` action resolves the session of the thread named by the
+        button's value and hands it back to the AI (a force-set, like Telegram's /done),
+        then acks into the thread. Anything else is ack'd and ignored.
+      security:
+        - slackSignature: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                payload: { type: string, description: JSON-encoded Slack interaction payload }
+      responses:
+        "200":
+          description: "`ok`."
+        "403":
+          description: Missing, wrong or stale Slack signature.
+        "404":
+          description: Slack is not configured.
+
   /api/billing/entitlement:
     post:
       tags: [secret-guarded]
@@ -1423,6 +1482,11 @@ components:
       in: header
       name: x-telegram-bot-api-secret-token
       description: Must equal the Worker's `TELEGRAM_WEBHOOK_SECRET` (Telegram echoes it back).
+    slackSignature:
+      type: apiKey
+      in: header
+      name: x-slack-signature
+      description: Slack's v0 request signature, with `x-slack-request-timestamp`, made with the Worker's `SLACK_SIGNING_SECRET` (see Slack's "Verifying requests from Slack").
     livekitWebhookToken:
       type: http
       scheme: bearer

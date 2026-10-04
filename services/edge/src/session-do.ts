@@ -44,7 +44,9 @@ import {
   getThreadForSession,
   kConversationSession,
   kHandoffSession,
+  kSessionToSlackThread,
   kSessionToThread,
+  kSlackThreadToSession,
   kThreadToSession,
   readTenantConfig,
 } from "./store";
@@ -297,8 +299,10 @@ export class SessionDO {
 
   /**
    * Deletes the session everywhere it is held once its retention has run out: its
-   * Telegram topic (with every message in it), its KV index entries, its uploaded
-   * media in R2, and this object's storage. A visitor who writes again later starts
+   * Telegram topic (with every message in it), its KV index entries (Telegram's and
+   * Slack's thread maps among them; Slack's own messages go by the workspace's
+   * retention setting), its uploaded media in R2, and this object's storage. A visitor
+   * who writes again later starts
    * a new conversation.
    * Telegram failing (a topic already deleted by hand, a missing admin right) does
    * not keep the rest; the topic is left for the group to remove. Returns whether
@@ -311,6 +315,7 @@ export class SessionDO {
     const sessionId = await this.state.storage.get<string>("sessionId");
     if (tenantId && sessionId) {
       const threadId = await getThreadForSession(this.env, tenantId, sessionId);
+      const slackTs = await this.env.KRISPY_KV.get(kSessionToSlackThread(tenantId, sessionId));
       const siteId = await this.state.storage.get<string>("siteId");
       const telegram =
         tenantId === "self"
@@ -326,6 +331,8 @@ export class SessionDO {
       await Promise.all([
         threadId ? this.env.KRISPY_KV.delete(kThreadToSession(tenantId, threadId)) : null,
         this.env.KRISPY_KV.delete(kSessionToThread(tenantId, sessionId)),
+        slackTs ? this.env.KRISPY_KV.delete(kSlackThreadToSession(tenantId, slackTs)) : null,
+        this.env.KRISPY_KV.delete(kSessionToSlackThread(tenantId, sessionId)),
         this.env.KRISPY_KV.delete(kHandoffSession(tenantId, sessionId)),
         this.env.KRISPY_KV.delete(kConversationSession(tenantId, sessionId)),
       ]);

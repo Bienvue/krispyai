@@ -1,0 +1,49 @@
+---
+title: connect Slack
+description: a Slack app from the manifest → a channel → three secrets. handoffs as threads.
+---
+
+# connect Slack
+
+Slack is an optional operator channel, beside or instead of Telegram. every visitor maps
+to **one thread** in a channel you choose: the first message starts it, the chat is
+mirrored into it, and you answer by replying in the thread. without it, the chat still
+answers.
+
+## 1. create the app
+
+in [api.slack.com/apps](https://api.slack.com/apps), **Create New App → From a manifest**,
+pick your workspace and paste
+[`services/edge/slack-manifest.json`](https://github.com/krispyhq/krispyai/blob/master/services/edge/slack-manifest.json)
+with `YOUR-WORKER` replaced by your Worker's origin. deploy the Worker with the secrets
+below first: Slack checks the events URL when you save.
+
+## 2. install it and pick the channel
+
+**Install to Workspace**, then invite the bot to the channel handoffs should go to
+(`/invite @krispy`). the channel id is under the channel's name → **About**.
+
+## 3. set the secrets
+
+```sh
+bunx wrangler secret put SLACK_BOT_TOKEN       # OAuth & Permissions → Bot User OAuth Token (xoxb-…)
+bunx wrangler secret put SLACK_CHANNEL_ID      # the channel's id (C…)
+bunx wrangler secret put SLACK_SIGNING_SECRET  # Basic Information → Signing Secret
+```
+
+Slack is on when all three are set, for the built-in `self` tenant.
+
+## how it works
+
+- **mirror:** visitor and AI messages are posted into the conversation's thread. visitor
+  text is escaped, so typing `<!channel>` can't ping anyone.
+- **handoff:** the alert pings `@channel`, shows in the channel as well as the thread, and
+  carries a **Hand back to AI** button (Slack doesn't run slash commands in threads, so
+  there is no `/done`).
+- **replies:** a reply in the thread reaches the visitor, links and formatting turned into
+  plain text.
+- **screenshots and lead forms** land in the thread.
+- **retention:** the Worker never deletes Slack messages. set the workspace's (or, on a
+  paid plan, the channel's) message retention to match `CONVERSATION_RETENTION_DAYS`. if
+  Slack deletes a thread's root while the conversation is still going, the next message
+  starts a new thread.

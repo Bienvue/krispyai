@@ -1,0 +1,27 @@
+meta {
+  name: Slack - interactions (hand back to AI)
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{baseUrl}}/api/slack/interactions
+  body: formUrlEncoded
+  auth: none
+}
+
+body:form-urlencoded {
+  payload: {"type":"block_actions","channel":{"id":"C0123"},"actions":[{"action_id":"handback","value":"1700000000.000100"}]}
+}
+
+tests {
+  test("unsigned requests are refused (or 404 without Slack config)", function() {
+    expect([403, 404]).to.include(res.status);
+  });
+}
+
+docs {
+  Slack interactivity endpoint, signed like /api/slack/events. The handoff alert's
+  "Hand back to AI" button (action_id handback, value = the thread ts) resolves the
+  session and hands it back to the AI, then acks in the thread.
+}

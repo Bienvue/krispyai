@@ -37,6 +37,9 @@ id = "120c1cccc84c455eab7b9e30ca346379" # `bunx wrangler kv namespace create KRI
 #   TELEGRAM_BOT_TOKEN        BotFather token
 #   TELEGRAM_CHAT_ID          supergroup id with Topics enabled (e.g. -1001234567890)
 #   TELEGRAM_WEBHOOK_SECRET   random string; also passed to setWebhook (secret_token)
+#   SLACK_BOT_TOKEN           optional Slack handoffs: the app's bot token (xoxb-…)
+#   SLACK_CHANNEL_ID          optional Slack handoffs: the channel's id (C…)
+#   SLACK_SIGNING_SECRET      optional Slack handoffs: the app's signing secret
 #   LIVEKIT_API_KEY           optional calls: LiveKit project key
 #   LIVEKIT_API_SECRET        optional calls: LiveKit project secret
 # ── optional vars ─────────────────────────────────────────────────────────────

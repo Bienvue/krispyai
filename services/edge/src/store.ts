@@ -189,6 +189,12 @@ export function resolveSiteId(raw: string | null | undefined): string | undefine
 // ── key builders (pure) ──────────────────────────────────────────────────────
 export const kThreadToSession = (t: string, threadId: number) => `thread:${t}:${threadId}`;
 export const kSessionToThread = (t: string, sessionId: string) => `session:${t}:${sessionId}`;
+// Slack's thread id is a string `ts`, so it gets its own keys beside Telegram's numeric map.
+export const kSlackThreadToSession = (t: string, ts: string) => `slack-thread:${t}:${ts}`;
+export const kSessionToSlackThread = (t: string, sessionId: string) =>
+  `slack-session:${t}:${sessionId}`;
+/** A Slack event being or already delivered (expires; see handleSlackEvents). */
+export const kSlackEvent = (t: string, eventId: string) => `slack-event:${t}:${eventId}`;
 export const kHandoffSession = (t: string, sessionId: string) => `handoff:${t}:${sessionId}`;
 export const kConversationSession = (t: string, sessionId: string) =>
   `conversation:${encodeURIComponent(t)}:${encodeURIComponent(sessionId)}`;
@@ -220,7 +226,8 @@ export async function getTenant(
   siteId?: string,
 ): Promise<TenantConfig | null> {
   if (tenantId === "self") {
-    if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return null;
+    // Either handoff channel makes "self" a tenant; with neither, chat still answers.
+    if (!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID) && !slackConfig(env, "self")) return null;
     // forms/connectors/theme (+ prompt/model overrides) only ever live in KV — merge
     // them in so the chat/lead path reads the SAME source as /api/widget/config.
     // Env creds win for botToken/chatId (the secrets); env prompt/model override KV
@@ -245,6 +252,22 @@ export type TelegramTenantConfig = TenantConfig & { botToken: string; chatId: st
  * tenants remain valid configs for prompts, Buttr handoff, forms, and email. */
 export function hasTelegramConfig(tenant: TenantConfig | null): tenant is TelegramTenantConfig {
   return !!tenant?.botToken && !!tenant.chatId;
+}
+
+export interface SlackConfig {
+  botToken: string;
+  channelId: string;
+  signingSecret: string;
+}
+
+/** The optional Slack handoff channel. Env secrets, so the built-in "self" tenant
+ * only; per-tenant Slack config in KV is not supported yet. */
+export function slackConfig(env: Env, tenantId: string): SlackConfig | null {
+  if (tenantId !== "self") return null;
+  const botToken = env.SLACK_BOT_TOKEN;
+  const channelId = env.SLACK_CHANNEL_ID;
+  const signingSecret = env.SLACK_SIGNING_SECRET;
+  return botToken && channelId && signingSecret ? { botToken, channelId, signingSecret } : null;
 }
 
 // ── tenant config sync (krispy CLI / your own tooling → gate) ────────────────
@@ -473,6 +496,34 @@ export async function linkThreadSession(
   await Promise.all([
     env.KRISPY_KV.put(kThreadToSession(t, threadId), sessionId),
     env.KRISPY_KV.put(kSessionToThread(t, sessionId), String(threadId)),
+  ]);
+}
+
+export async function getSlackThreadForSession(
+  env: Env,
+  t: string,
+  sessionId: string,
+): Promise<string | null> {
+  return env.KRISPY_KV.get(kSessionToSlackThread(t, sessionId));
+}
+
+export async function getSessionForSlackThread(
+  env: Env,
+  t: string,
+  ts: string,
+): Promise<string | null> {
+  return env.KRISPY_KV.get(kSlackThreadToSession(t, ts));
+}
+
+export async function linkSlackThread(
+  env: Env,
+  t: string,
+  ts: string,
+  sessionId: string,
+): Promise<void> {
+  await Promise.all([
+    env.KRISPY_KV.put(kSlackThreadToSession(t, ts), sessionId),
+    env.KRISPY_KV.put(kSessionToSlackThread(t, sessionId), ts),
   ]);
 }
 

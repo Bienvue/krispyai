@@ -8,6 +8,8 @@
 //   POST /api/contact                  [!HANDOFF] contact-capture → owner's topic
 //   POST /api/attachment               visitor pastes a screenshot → owner's topic
 //   POST /api/telegram/webhook         owner replies in a topic → push to visitor
+//   POST /api/slack/events             operator replies in a Slack thread → push to visitor
+//   POST /api/slack/interactions       "Hand back to AI" button → resolve, AI takes over
 //   POST /api/operator/reply           operator app reply → visitor (same DO spine)
 //   POST /api/operator/handoffs        operator app inbox (handed-off sessions)
 //   POST /api/operator/thread          one session's ring-buffer messages
@@ -32,6 +34,18 @@ import {
   sendHandoffAlert,
   sendPhotoToTopic,
 } from "./telegram";
+import {
+  escapeSlack,
+  isThreadGone,
+  parseHandback,
+  parseThreadReply,
+  slackHandoffAlert,
+  slackPost,
+  slackStartThread,
+  slackToPlain,
+  slackUploadImage,
+  verifySlackRequest,
+} from "./slack";
 import { authorizeOperator } from "./operator-auth";
 import {
   IMAGE_MAX_BYTES,
@@ -77,7 +91,14 @@ import {
   doInternalSecret,
   checkLeadRate,
   checkMediaUploadRate,
+  getSlackThreadForSession,
+  getSessionForSlackThread,
+  linkSlackThread,
+  slackConfig,
+  kSlackThreadToSession,
+  kSlackEvent,
   type EntitlementSnapshot,
+  type SlackConfig,
 } from "./store";
 
 export { SessionDO };
@@ -289,6 +310,10 @@ async function route(request: Request, env: Env, ctx?: WaitUntilContext): Promis
       return handleMediaRead(request, env, mediaRead[1]!);
     if (request.method === "POST" && path === "/api/telegram/webhook")
       return handleWebhook(request, env);
+    if (request.method === "POST" && path === "/api/slack/events")
+      return handleSlackEvents(request, env);
+    if (request.method === "POST" && path === "/api/slack/interactions")
+      return handleSlackInteractions(request, env);
     if (request.method === "POST" && path === "/api/operator/reply")
       return handleOperatorReply(request, env);
     if (request.method === "POST" && path === "/api/operator/reply-drafts")
@@ -631,6 +656,57 @@ async function handleVisitorIdentity(request: Request, env: Env): Promise<Respon
   return json(env, await response.json(), response.status);
 }
 
+// ── Slack threads ────────────────────────────────────────────────────────────
+/** The session's Slack thread, started (root message `title`) and linked on first use. */
+export async function ensureSlackThread(
+  env: Env,
+  slack: SlackConfig,
+  tenantId: string,
+  sessionId: string,
+  title: string,
+): Promise<string> {
+  const existing = await getSlackThreadForSession(env, tenantId, sessionId);
+  if (existing) return existing;
+  const ts = await slackStartThread(slack.botToken, slack.channelId, escapeSlack(title));
+  await linkSlackThread(env, tenantId, ts, sessionId);
+  return ts;
+}
+
+/**
+ * Run `post` against the session's thread. Slack's own retention deletes a thread's
+ * root on its schedule, which can be before this conversation ends; then a new thread
+ * is started, linked in place of the old one, and `post` runs once more. Returns the
+ * thread used, or null when the session has none (Slack was off when it started).
+ */
+export async function inSlackThread(
+  env: Env,
+  slack: SlackConfig,
+  tenantId: string,
+  sessionId: string,
+  post: (ts: string) => Promise<void>,
+  knownTs?: string | null,
+): Promise<string | null> {
+  const ts = knownTs ?? (await getSlackThreadForSession(env, tenantId, sessionId));
+  if (!ts) return null;
+  try {
+    await post(ts);
+    return ts;
+  } catch (e) {
+    if (!isThreadGone(e)) throw e;
+    const fresh = await slackStartThread(
+      slack.botToken,
+      slack.channelId,
+      `The conversation continues · ${sessionId.slice(0, 6)}`,
+    );
+    await Promise.all([
+      linkSlackThread(env, tenantId, fresh, sessionId),
+      env.KRISPY_KV.delete(kSlackThreadToSession(tenantId, ts)),
+    ]);
+    await post(fresh);
+    return fresh;
+  }
+}
+
 async function handleChat(
   request: Request,
   env: Env,
@@ -689,6 +765,11 @@ async function handleChat(
   else await indexPromise;
 
   const tenant = await getTenant(env, tenantId, siteId);
+  // Slack is the second optional mirror (beside Telegram), with the same best-effort
+  // posture. The thread's ts is held for the request so later mirrors skip the KV read.
+  const slack = slackConfig(env, tenantId);
+  const chatSessionId = body.sessionId;
+  let slackTs: string | null = null;
 
   // Authoritative memory: one combined DO read (handoff flag + ring) replaces the
   // /state read the flow made anyway — same subrequest count, and the AI context
@@ -742,7 +823,7 @@ async function handleChat(
     siteId,
   );
 
-  // Telegram is optional: no config → topic ops no-op, chat still answers.
+  // Telegram and Slack are optional: no config → topic ops no-op, chat still answers.
   const result = await chatFlow(
     {
       systemPrompt: buildSystemPrompt(
@@ -806,15 +887,36 @@ async function handleChat(
             return state.handoffState ?? (state.handedOff ? "operator" : "ai");
           },
       ensureTopic: async (sessionId, firstMessage) => {
+        const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
+        if (slack) {
+          try {
+            slackTs = await ensureSlackThread(env, slack, tenantId, sessionId, name);
+          } catch (e) {
+            console.error("slack thread failed (mirror best-effort):", e);
+          }
+        }
         if (!hasTelegramConfig(tenant)) return 0;
         const existing = await getThreadForSession(env, tenantId, sessionId);
         if (existing) return existing;
-        const name = `${firstMessage.slice(0, 40)} · ${sessionId.slice(0, 6)}`;
         const threadId = await createForumTopic(tenant.botToken, tenant.chatId, name);
         await linkThreadSession(env, tenantId, threadId, sessionId);
         return threadId;
       },
       toTopic: async (threadId, text) => {
+        if (slack && slackTs) {
+          try {
+            slackTs = await inSlackThread(
+              env,
+              slack,
+              tenantId,
+              chatSessionId,
+              (ts) => slackPost(slack.botToken, slack.channelId, ts, escapeSlack(text)),
+              slackTs,
+            );
+          } catch (e) {
+            console.error("slack mirror failed (best-effort):", e);
+          }
+        }
         if (hasTelegramConfig(tenant) && threadId)
           await sendToTopic(tenant.botToken, tenant.chatId, threadId, text);
       },
@@ -893,6 +995,22 @@ async function handleChat(
       // Deliberately OUTSIDE the tenant/Telegram guard (an app-only tenant has no
       // Telegram config) and failure-tolerant by contract (push.ts never throws).
       await pushToApp(env, tenantId, body.sessionId, message);
+      if (slack) {
+        await inSlackThread(
+          env,
+          slack,
+          tenantId,
+          body.sessionId,
+          (ts) =>
+            slackHandoffAlert(
+              slack.botToken,
+              slack.channelId,
+              ts,
+              "🙋 A visitor needs a human here.\nReply in this thread to answer them · press *Hand back to AI* when you're done.",
+            ),
+          slackTs,
+        ).catch((e) => console.error("slack handoff alert failed (best-effort):", e));
+      }
       if (hasTelegramConfig(tenant)) {
         const threadId = await getThreadForSession(env, tenantId, body.sessionId);
         if (threadId) {
@@ -956,7 +1074,8 @@ async function handleChat(
  * had to describe it in words, which is exactly what they were already failing to
  * do when they reached for the chat.
  *
- * TELEGRAM IS THE STORE for attachments, and that is a deliberate choice over adding
+ * THE HANDOFF CHANNEL IS THE STORE for attachments (Telegram, Slack, or both), and that
+ * is a deliberate choice over adding
  * R2. App-only Cloud tenants can chat and hand off through Buttr, but screenshot
  * upload remains unavailable until a separate attachment store lands.
  *
@@ -972,8 +1091,8 @@ async function handleChat(
  *   · MIME allowlist, checked against the declared type AND the magic bytes,
  *     because a declared content-type is a claim by the caller, not a fact;
  *   · a hard byte cap enforced here rather than trusted from the client;
- *   · requires an EXISTING topic — no conversation, no upload. A visitor cannot
- *     use this to create threads in someone's Telegram group.
+ *   · requires an EXISTING thread — no conversation, no upload. A visitor cannot
+ *     use this to create threads in someone's Telegram group or Slack channel.
  */
 export const ATTACH_MAX_BYTES = 5 * 1024 * 1024; // Telegram's sendPhoto ceiling is 10MB
 export const ATTACH_TYPES: Record<string, number[]> = {
@@ -1023,29 +1142,61 @@ async function handleAttachment(request: Request, env: Env): Promise<Response> {
     return json(env, { error: "unsupported_type", allowed: Object.keys(ATTACH_TYPES) }, 415);
 
   const tenant = await getTenant(env, tenantId, siteId);
-  if (!hasTelegramConfig(tenant)) return json(env, { error: "attachments_unavailable" }, 503);
+  const slack = slackConfig(env, tenantId);
+  if (!hasTelegramConfig(tenant) && !slack)
+    return json(env, { error: "attachments_unavailable" }, 503);
 
-  // NO TOPIC, NO UPLOAD. The topic is created by the first chat message, so this
-  // can only ever add to a conversation the visitor already started — it cannot
-  // be used to open threads in a stranger's group.
-  const threadId = await getThreadForSession(env, tenantId, sessionId);
-  if (!threadId) return json(env, { error: "no_conversation" }, 409);
+  // NO THREAD, NO UPLOAD. Threads are started by the first chat message, so this can
+  // only ever add to a conversation the visitor already started — it cannot be used
+  // to open threads in a stranger's group or channel.
+  const threadId = hasTelegramConfig(tenant)
+    ? await getThreadForSession(env, tenantId, sessionId)
+    : null;
+  const slackTs = slack ? await getSlackThreadForSession(env, tenantId, sessionId) : null;
+  if (!threadId && !slackTs) return json(env, { error: "no_conversation" }, 409);
 
-  try {
-    await sendPhotoToTopic(
-      tenant.botToken,
-      tenant.chatId,
-      threadId,
-      file,
-      // The visitor names nothing; a stable name keeps the thread readable.
-      "screenshot.png",
-      caption.trim() || "The visitor sent a screenshot.",
-    );
-  } catch (e) {
-    console.error("telegram sendPhoto failed:", e);
-    return json(env, { error: "delivery_failed" }, 502);
+  // The visitor names nothing; a stable name keeps the thread readable.
+  const note = caption.trim() || "The visitor sent a screenshot.";
+  let delivered = false;
+  if (hasTelegramConfig(tenant) && threadId) {
+    try {
+      await sendPhotoToTopic(
+        tenant.botToken,
+        tenant.chatId,
+        threadId,
+        file,
+        "screenshot.png",
+        note,
+      );
+      delivered = true;
+    } catch (e) {
+      console.error("telegram sendPhoto failed:", e);
+    }
   }
-  return json(env, { ok: true });
+  if (slack && slackTs) {
+    try {
+      await inSlackThread(
+        env,
+        slack,
+        tenantId,
+        sessionId,
+        (ts) =>
+          slackUploadImage(
+            slack.botToken,
+            slack.channelId,
+            ts,
+            file,
+            "screenshot.png",
+            escapeSlack(note),
+          ),
+        slackTs,
+      );
+      delivered = true;
+    } catch (e) {
+      console.error("slack upload failed:", e);
+    }
+  }
+  return delivered ? json(env, { ok: true }) : json(env, { error: "delivery_failed" }, 502);
 }
 
 /** Private, durable media for the Buttr operator channel. Telegram's legacy photo
@@ -1447,6 +1598,7 @@ async function handleLead(request: Request, env: Env): Promise<Response> {
 /**
  * Resolve tenant + FormSpec + connectors, then fan a lead out to the delivery channels:
  *   • Telegram — the existing sendToTopic into the visitor's topic (already has the full mirror)
+ *   • Slack    — the same values into the visitor's Slack thread
  *   • Email    — Resend, silent no-op without a key (email.ts)
  * whatsapp/instagram connectors are never delivered here (CTA-only in the widget).
  */
@@ -1459,21 +1611,21 @@ export async function deliverLead(env: Env, lead: LeadPayload): Promise<boolean>
     ? connectors.filter((c) => form.connectorIds!.includes(c.id))
     : connectors;
 
-  // Telegram delivery — drop the values into the visitor's topic.
+  // Telegram and Slack delivery — drop the values into the visitor's thread.
+  const lines = Object.entries(lead.values)
+    .filter(([, v]) => v && String(v).trim())
+    .map(([k, v]) => `• ${k}: ${v}`)
+    .join("\n");
+  const leadText = `📇 ${form?.title || "Lead"} captured:\n${lines || "—"}`;
   if (hasTelegramConfig(tenant)) {
     const threadId = await getThreadForSession(env, lead.tenantId, lead.sessionId);
-    if (threadId) {
-      const lines = Object.entries(lead.values)
-        .filter(([, v]) => v && String(v).trim())
-        .map(([k, v]) => `• ${k}: ${v}`)
-        .join("\n");
-      await sendToTopic(
-        tenant.botToken,
-        tenant.chatId,
-        threadId,
-        `📇 ${form?.title || "Lead"} captured:\n${lines || "—"}`,
-      );
-    }
+    if (threadId) await sendToTopic(tenant.botToken, tenant.chatId, threadId, leadText);
+  }
+  const slack = slackConfig(env, lead.tenantId);
+  if (slack) {
+    await inSlackThread(env, slack, lead.tenantId, lead.sessionId, (ts) =>
+      slackPost(slack.botToken, slack.channelId, ts, escapeSlack(leadText)),
+    ).catch((e) => console.error("slack lead delivery failed (best-effort):", e));
   }
 
   // Email delivery — every email connector in scope. wa.me reply button when a
@@ -1572,6 +1724,103 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
       body: JSON.stringify({ text: reply.text }),
     });
     await meter(env, tenantId, "handoff");
+  }
+  return new Response("ok");
+}
+
+// ── POST /api/slack/events · /api/slack/interactions ─────────────────────────
+// Slack, like Telegram, is configured for the "self" tenant. Both routes check Slack's
+// signature over the raw body before reading anything, and answer 200 quickly: Slack
+// retries anything slower than 3 seconds.
+async function slackRequest(
+  request: Request,
+  env: Env,
+): Promise<{ slack: SlackConfig; raw: string } | Response> {
+  const slack = slackConfig(env, DEFAULT_TENANT);
+  if (!slack) return new Response("not found", { status: 404 });
+  const raw = await request.text();
+  const ok = await verifySlackRequest(
+    slack.signingSecret,
+    request.headers.get("x-slack-request-timestamp"),
+    request.headers.get("x-slack-signature"),
+    raw,
+  );
+  return ok ? { slack, raw } : new Response("forbidden", { status: 403 });
+}
+
+// Slack retries an event three times, the last about five minutes after the first.
+const SLACK_EVENT_TTL_SECONDS = 60 * 60;
+
+function parseJson(raw: string | null): unknown {
+  try {
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function handleSlackEvents(request: Request, env: Env): Promise<Response> {
+  const verified = await slackRequest(request, env);
+  if (verified instanceof Response) return verified;
+  const body = parseJson(verified.raw) as {
+    type?: string;
+    challenge?: string;
+    event_id?: string;
+    event?: unknown;
+  } | null;
+  if (body?.type === "url_verification") return Response.json({ challenge: body.challenge });
+  const reply =
+    body?.type === "event_callback" ? parseThreadReply(body.event, verified.slack.channelId) : null;
+  if (!reply) return new Response("ok");
+  const sessionId = await getSessionForSlackThread(env, DEFAULT_TENANT, reply.threadTs);
+  if (!sessionId) return new Response("ok");
+
+  // Slack redelivers an event it didn't see a 200 for within 3 seconds, so the same
+  // reply can arrive while the first delivery is still running, or after it failed.
+  // Claim the event_id before delivering and release the claim if delivery fails:
+  // a slow delivery is never repeated, and a failed one is retried by Slack.
+  const claim = body?.event_id ? kSlackEvent(DEFAULT_TENANT, body.event_id) : null;
+  if (claim) {
+    if (await env.KRISPY_KV.get(claim)) return new Response("ok");
+    await env.KRISPY_KV.put(claim, "1", { expirationTtl: SLACK_EVENT_TTL_SECONDS });
+  }
+  const pushed = await doFetch(env, DEFAULT_TENANT, sessionId, "https://do/operator", {
+    method: "POST",
+    body: JSON.stringify({ text: slackToPlain(reply.text) }),
+  }).catch((e) => {
+    console.error("slack reply delivery failed:", e);
+    return null;
+  });
+  if (!pushed?.ok) {
+    if (claim) await env.KRISPY_KV.delete(claim);
+    return new Response("retry", { status: 500 });
+  }
+  await meter(env, DEFAULT_TENANT, "handoff");
+  return new Response("ok");
+}
+
+async function handleSlackInteractions(request: Request, env: Env): Promise<Response> {
+  const verified = await slackRequest(request, env);
+  if (verified instanceof Response) return verified;
+  const { slack, raw } = verified;
+  const threadTs = parseHandback(
+    parseJson(new URLSearchParams(raw).get("payload")),
+    slack.channelId,
+  );
+  if (!threadTs) return new Response("ok");
+  const sessionId = await getSessionForSlackThread(env, DEFAULT_TENANT, threadTs);
+  if (sessionId) {
+    // Force-set (not toggle), like Telegram's /done, so a second click can't un-resolve.
+    await doFetch(env, DEFAULT_TENANT, sessionId, "https://do/resolve", {
+      method: "POST",
+      body: JSON.stringify({ resolved: true }),
+    });
+    await slackPost(
+      slack.botToken,
+      slack.channelId,
+      threadTs,
+      "✅ Resolved — the AI has this chat again. Reply here anytime to take back over.",
+    ).catch((e) => console.error("slack resolve ack failed (best-effort):", e));
   }
   return new Response("ok");
 }
@@ -2132,6 +2381,7 @@ async function handleWidgetConfig(request: Request, env: Env): Promise<Response>
   const capabilities = {
     attachments:
       !!env.MEDIA ||
+      !!slackConfig(env, t) ||
       (t === DEFAULT_TENANT
         ? !!env.TELEGRAM_BOT_TOKEN && !!env.TELEGRAM_CHAT_ID
         : !!cfg?.botToken && !!cfg.chatId),

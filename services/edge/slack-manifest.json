@@ -1,0 +1,20 @@
+{
+  "display_information": { "name": "Krispy handoffs" },
+  "features": { "bot_user": { "display_name": "krispy", "always_online": true } },
+  "oauth_config": {
+    "scopes": { "bot": ["chat:write", "files:write", "channels:history", "groups:history"] }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://YOUR-WORKER/api/slack/events",
+      "bot_events": ["message.channels", "message.groups"]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://YOUR-WORKER/api/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
