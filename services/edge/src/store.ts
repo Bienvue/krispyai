@@ -193,6 +193,8 @@ export const kSessionToThread = (t: string, sessionId: string) => `session:${t}:
 export const kSlackThreadToSession = (t: string, ts: string) => `slack-thread:${t}:${ts}`;
 export const kSessionToSlackThread = (t: string, sessionId: string) =>
   `slack-session:${t}:${sessionId}`;
+/** The thread a session's handoff alert (and its hand-back button) was posted in. */
+export const kSlackAlert = (t: string, sessionId: string) => `slack-alert:${t}:${sessionId}`;
 /** A Slack event being or already delivered (expires; see handleSlackEvents). */
 export const kSlackEvent = (t: string, eventId: string) => `slack-event:${t}:${eventId}`;
 export const kHandoffSession = (t: string, sessionId: string) => `handoff:${t}:${sessionId}`;

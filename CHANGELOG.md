@@ -25,7 +25,8 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 - Optional Slack handoffs (`SLACK_BOT_TOKEN`, `SLACK_CHANNEL_ID`,
   `SLACK_SIGNING_SECRET`), beside Telegram: each conversation is a thread in one
   channel, mirrored like a Telegram topic; the handoff alert pings `@channel` and
-  carries a **Hand back to AI** button; replies in the thread reach the visitor;
+  carries a **Hand back to AI** button, posted again with the visitor's next message
+  if it couldn't be posted at handoff; replies in the thread reach the visitor;
   screenshots and lead forms land in the thread. New signed routes
   `POST /api/slack/events` and `POST /api/slack/interactions`, and an app manifest in
   `services/edge/slack-manifest.json`. The Worker never deletes Slack messages:

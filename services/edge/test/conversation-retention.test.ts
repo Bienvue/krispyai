@@ -7,6 +7,7 @@ import {
   kHandoffSession,
   kSessionToSlackThread,
   kSessionToThread,
+  kSlackAlert,
   kSlackThreadToSession,
   kThreadToSession,
 } from "../src/store";
@@ -136,6 +137,7 @@ describe("conversation retention", () => {
     await conversation(s, Date.now() - 91 * DAY);
     s.kv.set(kSessionToSlackThread("self", "s1"), "1700000000.000100");
     s.kv.set(kSlackThreadToSession("self", "1700000000.000100"), "s1");
+    s.kv.set(kSlackAlert("self", "s1"), "1700000000.000100");
     await s.session.alarm();
     expect(s.kv.size).toBe(0);
     expect(s.telegram.every((c) => c.method === "deleteForumTopic")).toBe(true);

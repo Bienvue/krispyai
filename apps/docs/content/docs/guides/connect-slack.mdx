@@ -39,7 +39,8 @@ Slack is on when all three are set, for the built-in `self` tenant.
   text is escaped, so typing `<!channel>` can't ping anyone.
 - **handoff:** the alert pings `@channel`, shows in the channel as well as the thread, and
   carries a **Hand back to AI** button (Slack doesn't run slash commands in threads, so
-  there is no `/done`).
+  there is no `/done`). if the alert couldn't be posted (Slack down, or the bot not yet in
+  the channel), it's posted with the visitor's next message.
 - **replies:** a reply in the thread reaches the visitor, links and formatting turned into
   plain text.
 - **screenshots and lead forms** land in the thread.

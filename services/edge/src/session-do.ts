@@ -46,6 +46,7 @@ import {
   kHandoffSession,
   kSessionToSlackThread,
   kSessionToThread,
+  kSlackAlert,
   kSlackThreadToSession,
   kThreadToSession,
   readTenantConfig,
@@ -333,6 +334,7 @@ export class SessionDO {
         this.env.KRISPY_KV.delete(kSessionToThread(tenantId, sessionId)),
         slackTs ? this.env.KRISPY_KV.delete(kSlackThreadToSession(tenantId, slackTs)) : null,
         this.env.KRISPY_KV.delete(kSessionToSlackThread(tenantId, sessionId)),
+        this.env.KRISPY_KV.delete(kSlackAlert(tenantId, sessionId)),
         this.env.KRISPY_KV.delete(kHandoffSession(tenantId, sessionId)),
         this.env.KRISPY_KV.delete(kConversationSession(tenantId, sessionId)),
       ]);

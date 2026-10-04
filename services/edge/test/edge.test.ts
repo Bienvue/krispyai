@@ -2543,6 +2543,48 @@ describe("Slack chat mirror", () => {
     }
   });
 
+  test("an alert that failed to post comes with the next message, once", async () => {
+    const env = wireSessionNS(
+      fakeEnv({
+        ...SLACK_ENV,
+        AI: { run: async () => ({ response: "Let me get someone. [!HANDOFF]" }) } as unknown as Ai,
+      }),
+    );
+    let alertsDown = true; // e.g. the bot wasn't in the channel yet
+    const posts = captureSlack((body) =>
+      body.reply_broadcast && alertsDown
+        ? { ok: false, error: "not_in_channel" }
+        : { ok: true, ts: "10.1" },
+    );
+    try {
+      await chat(env, "sess-slack-4", "I need a person");
+      expect(posts.filter((p) => p.reply_broadcast)).toHaveLength(1); // tried, failed
+      alertsDown = false;
+      await chat(env, "sess-slack-4", "hello?");
+      await chat(env, "sess-slack-4", "anyone?");
+      const alerts = posts.filter((p) => p.reply_broadcast);
+      expect(alerts).toHaveLength(2); // the failed one, then one that landed
+      expect(alerts[1].thread_ts).toBe("10.1");
+      expect(alerts[1].blocks[1].elements[0].action_id).toBe("handback");
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
+  test("a conversation the AI is answering gets no alert", async () => {
+    const env = wireSessionNS(
+      fakeEnv({ ...SLACK_ENV, AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai }),
+    );
+    const posts = captureSlack();
+    try {
+      await chat(env, "sess-slack-5", "hi");
+      await chat(env, "sess-slack-5", "thanks");
+      expect(posts.filter((p) => p.reply_broadcast)).toHaveLength(0);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+
   test("Slack being down never blocks the visitor's reply", async () => {
     const env = wireSessionNS(
       fakeEnv({ ...SLACK_ENV, AI: { run: async () => ({ response: "Hello." }) } as unknown as Ai }),

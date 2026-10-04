@@ -97,6 +97,7 @@ import {
   slackConfig,
   kSlackThreadToSession,
   kSlackEvent,
+  kSlackAlert,
   type EntitlementSnapshot,
   type SlackConfig,
 } from "./store";
@@ -707,6 +708,36 @@ export async function inSlackThread(
   }
 }
 
+/** Post the loud handoff alert, with its hand-back button, into the session's thread,
+ * and remember which thread has it. Best-effort, like every Slack post on chat. */
+async function postSlackAlert(
+  env: Env,
+  slack: SlackConfig,
+  tenantId: string,
+  sessionId: string,
+  knownTs: string | null,
+): Promise<void> {
+  try {
+    const ts = await inSlackThread(
+      env,
+      slack,
+      tenantId,
+      sessionId,
+      (t) =>
+        slackHandoffAlert(
+          slack.botToken,
+          slack.channelId,
+          t,
+          "🙋 A visitor needs a human here.\nReply in this thread to answer them · press *Hand back to AI* when you're done.",
+        ),
+      knownTs,
+    );
+    if (ts) await env.KRISPY_KV.put(kSlackAlert(tenantId, sessionId), ts);
+  } catch (e) {
+    console.error("slack handoff alert failed (best-effort):", e);
+  }
+}
+
 async function handleChat(
   request: Request,
   env: Env,
@@ -996,20 +1027,9 @@ async function handleChat(
       // Telegram config) and failure-tolerant by contract (push.ts never throws).
       await pushToApp(env, tenantId, body.sessionId, message);
       if (slack) {
-        await inSlackThread(
-          env,
-          slack,
-          tenantId,
-          body.sessionId,
-          (ts) =>
-            slackHandoffAlert(
-              slack.botToken,
-              slack.channelId,
-              ts,
-              "🙋 A visitor needs a human here.\nReply in this thread to answer them · press *Hand back to AI* when you're done.",
-            ),
-          slackTs,
-        ).catch((e) => console.error("slack handoff alert failed (best-effort):", e));
+        // A new escalation always alerts, even in a thread that had one before.
+        await env.KRISPY_KV.delete(kSlackAlert(tenantId, chatSessionId));
+        await postSlackAlert(env, slack, tenantId, chatSessionId, slackTs);
       }
       if (hasTelegramConfig(tenant)) {
         const threadId = await getThreadForSession(env, tenantId, body.sessionId);
@@ -1027,6 +1047,15 @@ async function handleChat(
         }
       }
     }
+  }
+
+  // The hand-back button exists only on the alert, so a conversation waiting for or
+  // with a person needs one in its current thread. If it failed to post (Slack down,
+  // the bot not yet in the channel) or Slack's retention replaced the thread, post it
+  // with this message.
+  if (slack && slackTs && !result.handoff && result.handoffState !== "ai") {
+    const alerted = await env.KRISPY_KV.get(kSlackAlert(tenantId, chatSessionId));
+    if (alerted !== slackTs) await postSlackAlert(env, slack, tenantId, chatSessionId, slackTs);
   }
 
   // Resolve the FormSpec (+ its visitor-facing CTA connectors) so the widget — which
