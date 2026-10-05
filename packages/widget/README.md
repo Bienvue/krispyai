@@ -29,6 +29,7 @@ bucket) and drop one tag on any page:
 | `data-title`    | no       | `Chat with us` | header text                                          |
 | `data-accent`   | no       | `#e39a2b`      | brand color (used before the KV `theme` fetch lands) |
 | `data-launcher` | no       | (built-in)     | `none` suppresses the built-in launcher button       |
+| `data-avatar`   | no       | Buttr          | `none` shows no avatar from the start, before the theme loads |
 
 ## Bring your own launcher
 

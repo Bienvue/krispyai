@@ -12,6 +12,9 @@ entry under `[Unreleased]` (see `AGENTS.md` §7 — Documentation sync).
 
 ### Added
 
+- Widget: `data-avatar="none"` on the script tag shows no avatar from the first
+  paint, so `buttr.png` is never requested before a theme with `avatar: "none"`
+  arrives (and a host page's CSP has nothing to block).
 - Optional support availability: `availability` in the tenant config (an IANA
   timezone, weekly hours and holidays) decides whether a teammate is available.
   `GET /api/availability` returns `{ online, nextOnlineAt }`; each chat turn tells
