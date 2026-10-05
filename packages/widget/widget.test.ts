@@ -91,6 +91,12 @@ describe("widget visual contract", () => {
     expect(source).toContain("padding:7px;border-radius:0;background:transparent");
   });
 
+  test('data-avatar="none" never requests buttr.png before the theme loads', () => {
+    expect(source).toContain('avatar: (script && script.getAttribute("data-avatar")) || ""');
+    const boot = source.slice(source.indexOf('if (cfg.avatar === "none") {'));
+    expect(boot.slice(0, boot.indexOf("} else {"))).not.toContain("setButtr");
+  });
+
   test("pill width follows the intrinsic label instead of a flex-shrunk button", () => {
     expect(source).toContain("Math.ceil(pillLabel.scrollWidth + 87)");
     expect(source).not.toContain("Math.max(116, pillBtn.scrollWidth)");

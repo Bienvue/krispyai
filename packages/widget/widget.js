@@ -32,6 +32,10 @@
     // from their own mark via window.krispy (see "embedder API" at the bottom).
     // Absent — the default — renders the launcher exactly as before.
     launcher: (script && script.getAttribute("data-launcher")) || "",
+    // "none" → no avatar from the first paint: buttr.png is never requested, so a
+    // page whose CSP leaves out the widget's origin logs nothing. The theme's
+    // avatar still applies once it loads.
+    avatar: (script && script.getAttribute("data-avatar")) || "",
   };
   if (!cfg.api) return console.error("[krispy] missing data-api on <script>");
 
@@ -939,8 +943,13 @@
     };
     img.src = BUTTR_PNG || BUTTR;
   }
-  setButtr(avatarEl);
-  setButtr(launcherIcon);
+  if (cfg.avatar === "none") {
+    avatarEl.style.display = "none";
+    launcherIcon.src = CHAT_MARK;
+  } else {
+    setButtr(avatarEl);
+    setButtr(launcherIcon);
+  }
 
   // ── theme (boot fetch, init-gated, NO poll — decorative → never blocks chat) ──
   var greeting = ""; // optional first bot bubble on open; set by theme
